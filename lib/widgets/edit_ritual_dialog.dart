@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:image/image.dart' show decodeImage, copyResize, encodeJpg;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -17,7 +18,8 @@ class EditRitualDialog extends StatefulWidget {
 
 class _EditRitualDialogState extends State<EditRitualDialog> {
   late TextEditingController _titleController;
-  late TextEditingController _durationController;
+  late TextEditingController _minutesController;
+  late TextEditingController _secondsController;
   late String _selectedCategory;
   late bool _isPremium;
   late bool _isAdRequired;
@@ -29,9 +31,15 @@ class _EditRitualDialogState extends State<EditRitualDialog> {
   void initState() {
     super.initState();
     _titleController = TextEditingController(text: widget.ritual.title);
-    _durationController = TextEditingController(
-      text: widget.ritual.duration.toString(),
-    );
+
+    final totalSeconds =
+        widget.ritual.durationSeconds ?? (widget.ritual.duration * 60);
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+
+    _minutesController = TextEditingController(text: minutes.toString());
+    _secondsController = TextEditingController(text: seconds.toString());
+
     _selectedCategory = widget.ritual.category;
     _isPremium = widget.ritual.isPremium;
     _isAdRequired = widget.ritual.isAdRequired;
@@ -40,7 +48,9 @@ class _EditRitualDialogState extends State<EditRitualDialog> {
   @override
   void dispose() {
     _titleController.dispose();
-    _durationController.dispose();
+    _titleController.dispose();
+    _minutesController.dispose();
+    _secondsController.dispose();
     super.dispose();
   }
 
@@ -52,8 +62,31 @@ class _EditRitualDialogState extends State<EditRitualDialog> {
       );
 
       if (result != null) {
+        final file = result.files.first;
+
+        // Compression logic for web or small memory devices
+        if (kIsWeb && file.bytes != null) {
+          // Offload to compute to avoid UI jank if possible, but for simplicity:
+          final img = decodeImage(file.bytes!);
+          if (img != null) {
+            // Resize to max 800px width
+            final resized = copyResize(img, width: 800);
+            // Compress
+            final compressed = encodeJpg(resized, quality: 85);
+
+            setState(() {
+              _newCoverImage = PlatformFile(
+                name: file.name,
+                size: compressed.length,
+                bytes: Uint8List.fromList(compressed),
+              );
+            });
+            return;
+          }
+        }
+
         setState(() {
-          _newCoverImage = result.files.first;
+          _newCoverImage = file;
         });
       }
     } catch (e) {
@@ -81,11 +114,18 @@ class _EditRitualDialogState extends State<EditRitualDialog> {
         newImageUrl = await imageRef.getDownloadURL();
       }
 
+      final minutes = int.tryParse(_minutesController.text) ?? 0;
+      final seconds = int.tryParse(_secondsController.text) ?? 0;
+      final totalSeconds = (minutes * 60) + seconds;
+      final durationMins = totalSeconds > 0
+          ? (totalSeconds / 60).round()
+          : 1; // Approx for legacy
+
       final updatedMeditation = widget.ritual.copyWith(
         title: _titleController.text.trim(),
         category: _selectedCategory,
-        duration:
-            int.tryParse(_durationController.text) ?? widget.ritual.duration,
+        duration: durationMins > 0 ? durationMins : 1,
+        durationSeconds: totalSeconds > 0 ? totalSeconds : 60,
         coverImage: newImageUrl ?? widget.ritual.coverImage,
         isPremium: _isPremium,
         isAdRequired: _isAdRequired,
@@ -133,15 +173,27 @@ class _EditRitualDialogState extends State<EditRitualDialog> {
               ),
               const SizedBox(height: 16),
 
-              // Duration
-              TextField(
-                controller: _durationController,
-                keyboardType: TextInputType.number,
-                style: TextStyle(color: AppTheme.getTextColor(context)),
-                decoration: _buildInputDecoration(
-                  context,
-                  'Duration (minutes)',
-                ),
+              // Duration (Minutes + Seconds)
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _minutesController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: AppTheme.getTextColor(context)),
+                      decoration: _buildInputDecoration(context, 'Minutes'),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextField(
+                      controller: _secondsController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: AppTheme.getTextColor(context)),
+                      decoration: _buildInputDecoration(context, 'Seconds'),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
 

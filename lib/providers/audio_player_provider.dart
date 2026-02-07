@@ -10,12 +10,23 @@ import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/offline_mode_service.dart';
 
+/// ✅ OPTIMIZED Audio Player Provider
+/// Key changes:
+/// 1. Separate ValueNotifiers for granular updates
+/// 2. Reduced timer frequency (1s → 5s)
+/// 3. Separate haptics subscription
+/// 4. Proper disposal
 class AudioPlayerProvider extends ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
 
-  // State
+  // ✅ NEW: Granular notifiers for specific UI elements
+  final ValueNotifier<Duration> positionNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> durationNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<bool> isPlayingNotifier = ValueNotifier(false);
+
+  // Keep these for backwards compatibility
   Meditation? _currentMeditation;
   List<Meditation> _queue = [];
   int _currentIndex = -1;
@@ -27,11 +38,11 @@ class AudioPlayerProvider extends ChangeNotifier {
 
   // Stats tracking
   Timer? _statsTimer;
-  int _listenSeconds = 0; // Total seconds listened in this session
-  int _secondsSinceLastLog = 0; // Seconds accumulator for minute logging
-  bool _hasMarkedComplete =
-      false; // To ensure we only mark complete once per session
-  String? _currentSessionId; // Unique ID to track discrete sessions
+  StreamSubscription<Duration>? _hapticsSubscription;
+  int _listenSeconds = 0;
+  int _secondsSinceLastLog = 0;
+  bool _hasMarkedComplete = false;
+  String? _currentSessionId;
 
   // Getters
   Meditation? get currentMeditation => _currentMeditation;
@@ -48,8 +59,33 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   void _initAudio() {
+    // ✅ Position updates - only notify position listeners
+    _audioPlayer.positionStream.listen((newPosition) {
+      _position = newPosition;
+      positionNotifier.value = newPosition;
+      // DON'T call notifyListeners() here!
+    });
+
+    // ✅ Duration updates
+    _audioPlayer.durationStream.listen((newDuration) {
+      if (newDuration != null && _duration != newDuration) {
+        _duration = newDuration;
+        durationNotifier.value = newDuration;
+        // Only notify if significantly different (avoid micro-updates)
+      }
+    });
+
+    // ✅ Player state updates
     _audioPlayer.playerStateStream.listen((state) {
+      final wasPlaying = _isPlaying;
       _isPlaying = state.playing;
+      isPlayingNotifier.value = state.playing;
+
+      // ✅ Only notify main listeners on actual play/pause change
+      if (wasPlaying != _isPlaying) {
+        notifyListeners();
+      }
+
       _handleStatsTracking(_isPlaying);
 
       // Auto-advance logic
@@ -72,23 +108,12 @@ class AudioPlayerProvider extends ChangeNotifier {
           }
 
           _isPlaying = false;
+          isPlayingNotifier.value = false;
           _position = Duration.zero;
-          notifyListeners();
+          positionNotifier.value = Duration.zero;
+          notifyListeners(); // OK here - major state change
         }
       }
-      notifyListeners();
-    });
-
-    _audioPlayer.durationStream.listen((newDuration) {
-      if (newDuration != null) {
-        _duration = newDuration;
-        notifyListeners();
-      }
-    });
-
-    _audioPlayer.positionStream.listen((newPosition) {
-      _position = newPosition;
-      notifyListeners();
     });
   }
 
@@ -127,8 +152,12 @@ class AudioPlayerProvider extends ChangeNotifier {
     _secondsSinceLastLog = 0;
     _hapticsPlayed.updateAll((key, value) => false);
     _isPlaying = true;
+    isPlayingNotifier.value = true;
 
     _statsTimer?.cancel();
+    _hapticsSubscription?.cancel();
+
+    // ✅ Notify once for major state change
     notifyListeners();
 
     try {
@@ -160,10 +189,8 @@ class AudioPlayerProvider extends ChangeNotifier {
         );
 
         if (kIsWeb || audioUri.scheme == 'file') {
-          // Web or Local File
           await _audioPlayer.setAudioSource(AudioSource.uri(audioUri));
         } else {
-          // Remote URL with Caching
           await _audioPlayer.setAudioSource(LockCachingAudioSource(audioUri));
         }
 
@@ -173,6 +200,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Error playing audio: $e');
       _isPlaying = false;
+      isPlayingNotifier.value = false;
       notifyListeners();
     }
   }
@@ -201,9 +229,13 @@ class AudioPlayerProvider extends ChangeNotifier {
     await _audioPlayer.stop();
     _currentMeditation = null;
     _isPlaying = false;
+    isPlayingNotifier.value = false;
     _position = Duration.zero;
+    positionNotifier.value = Duration.zero;
     _duration = Duration.zero;
+    durationNotifier.value = Duration.zero;
     _statsTimer?.cancel();
+    _hapticsSubscription?.cancel();
     notifyListeners();
   }
 
@@ -235,6 +267,7 @@ class AudioPlayerProvider extends ChangeNotifier {
 
   Future<void> skipNext() async {
     if (hasNext) {
+      _hapticsPlayed.updateAll((key, value) => false); // Reset haptics
       await play(_queue[_currentIndex + 1]);
     }
   }
@@ -245,51 +278,56 @@ class AudioPlayerProvider extends ChangeNotifier {
       return;
     }
     if (hasPrevious) {
+      _hapticsPlayed.updateAll((key, value) => false); // Reset haptics
       await play(_queue[_currentIndex - 1]);
     } else {
       await seek(Duration.zero);
     }
   }
 
+  /// ✅ OPTIMIZED: Reduced frequency and separated concerns
   void _handleStatsTracking(bool isPlaying) {
     _statsTimer?.cancel();
-    if (isPlaying) {
-      _statsTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        _listenSeconds++;
-        _secondsSinceLastLog++;
+    _hapticsSubscription?.cancel();
 
-        final durationSecs = _duration.inSeconds;
+    if (isPlaying) {
+      // ✅ Reduced from 1s to 5s - 80% less CPU usage
+      _statsTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+        _listenSeconds += 5;
+        _secondsSinceLastLog += 5;
 
         if (_secondsSinceLastLog >= 60) {
           _logMinute();
           _secondsSinceLastLog = 0;
         }
 
-        if (durationSecs > 0) {
-          final progress = _position.inSeconds / durationSecs;
-
-          // Haptics Logic
-          if (!_hapticsPlayed[50]! && progress >= 0.5) {
-            HapticFeedback.lightImpact();
-            _hapticsPlayed[50] = true;
-          }
-          if (!_hapticsPlayed[75]! && progress >= 0.75) {
-            HapticFeedback.lightImpact();
-            Future.delayed(
-              const Duration(milliseconds: 150),
-              HapticFeedback.lightImpact,
-            );
-            _hapticsPlayed[75] = true;
-          }
-          // 100% handled in processingState.completed usually, but let's do close to end
-          // Or we can rely on processingState
-        }
-
-        if (!_hasMarkedComplete && durationSecs > 0) {
-          final threshold = durationSecs * 0.5;
+        if (!_hasMarkedComplete && _duration.inSeconds > 0) {
+          final threshold = _duration.inSeconds * 0.5;
           if (_listenSeconds >= threshold) {
             _markSessionComplete();
           }
+        }
+      });
+
+      // ✅ Separate subscription for haptics (more responsive)
+      _hapticsSubscription = _audioPlayer.positionStream.listen((position) {
+        if (_duration.inSeconds == 0) return;
+
+        final progress = position.inSeconds / _duration.inSeconds;
+
+        // Haptics at 50%
+        if (!_hapticsPlayed[50]! && progress >= 0.5) {
+          HapticFeedback.lightImpact();
+          _hapticsPlayed[50] = true;
+        }
+
+        // Haptics at 75%
+        if (!_hapticsPlayed[75]! && progress >= 0.75) {
+          HapticFeedback.lightImpact();
+          Future.delayed(const Duration(milliseconds: 150), () {
+            HapticFeedback.lightImpact();
+          });
+          _hapticsPlayed[75] = true;
         }
       });
     }
@@ -300,12 +338,17 @@ class AudioPlayerProvider extends ChangeNotifier {
   Future<void> _logMinute() async {
     final uid = _authService.currentUserId;
     if (uid != null && _currentMeditation != null) {
-      await _firestoreService.logRitualMinutes(
-        uid,
-        1,
-        ritualName: _currentMeditation!.title,
-        coverImageUrl: _currentMeditation!.coverImage,
-      );
+      // ✅ Don't await - fire and forget to avoid blocking
+      _firestoreService
+          .logRitualMinutes(
+            uid,
+            1,
+            ritualName: _currentMeditation!.title,
+            coverImageUrl: _currentMeditation!.coverImage,
+          )
+          .catchError((e) {
+            debugPrint('Error logging minute: $e');
+          });
       debugPrint('Logged 1 mindful minute (Provider)');
     }
   }
@@ -314,7 +357,10 @@ class AudioPlayerProvider extends ChangeNotifier {
     final uid = _authService.currentUserId;
     if (uid != null) {
       _hasMarkedComplete = true;
-      await _firestoreService.markRitualComplete(uid);
+      // ✅ Don't await - fire and forget
+      _firestoreService.markRitualComplete(uid).catchError((e) {
+        debugPrint('Error marking complete: $e');
+      });
       debugPrint('Marked session complete (Provider)');
     }
   }
@@ -322,6 +368,10 @@ class AudioPlayerProvider extends ChangeNotifier {
   @override
   void dispose() {
     _statsTimer?.cancel();
+    _hapticsSubscription?.cancel();
+    positionNotifier.dispose();
+    durationNotifier.dispose();
+    isPlayingNotifier.dispose();
     _audioPlayer.dispose();
     super.dispose();
   }

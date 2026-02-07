@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'ritual_cover_image.dart';
 import '../models/meditation.dart';
 import '../theme/app_theme.dart';
 import '../screens/audio_player_screen.dart';
+
+enum SwipeDirection { left, right, top, bottom }
 
 class DiscoveryCardStack extends StatefulWidget {
   final List<Meditation> meditations;
@@ -23,17 +25,8 @@ class DiscoveryCardStack extends StatefulWidget {
 }
 
 class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
-  // ... (existing code variables)
-  // We will work with a local list.
   List<Meditation> _cards = [];
   final List<Meditation> _history = []; // For Undo
-
-  // For dragging
-  Offset _dragOffset = Offset.zero;
-  bool _isDragging = false;
-
-  // Thresholds
-  static const double _actionThreshold = 100.0; // Distance to trigger action
 
   @override
   void initState() {
@@ -44,8 +37,9 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
   void _filterAndShuffleCards() {
     // Filter logic: Free user sees only free audio, premium user sees all.
     final available = widget.meditations.where((m) {
-      if (widget.isSubscriber)
-        return true; // Premium user sees all (logic per requirements)
+      if (widget.isSubscriber) {
+        return true; // Premium user sees all
+      }
       return !m.isPremium; // Free user sees only non-premium
     }).toList();
 
@@ -57,106 +51,68 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
     });
   }
 
-  void _onPanStart(DragStartDetails details) {
-    setState(() {
-      _isDragging = true;
-    });
-  }
+  void _handleSwipe(SwipeDirection direction) {
+    if (_cards.isEmpty) return;
+    final card = _cards.last;
 
-  void _onPanUpdate(DragUpdateDetails details) {
-    setState(() {
-      _dragOffset += details.delta;
-    });
-  }
+    switch (direction) {
+      case SwipeDirection.top:
+        // Play
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AudioPlayerScreen(meditation: card),
+          ),
+        );
+        // We keep the card for now as user might return.
+        // Or should we reshuffle it?
+        // Let's keep it as is.
+        break;
 
-  void _onPanEnd(DragEndDetails details) {
-    setState(() {
-      _isDragging = false;
-    });
+      case SwipeDirection.bottom:
+        // Listen Later
+        widget.onListenLater(card);
+        setState(() {
+          _history.add(card);
+          _cards.removeLast();
+        });
+        break;
 
-    final dx = _dragOffset.dx;
-    final dy = _dragOffset.dy;
+      case SwipeDirection.left:
+        // Skip
+        setState(() {
+          _history.add(card);
+          _cards.removeLast();
+        });
+        break;
 
-    // Priorities: Top (Play) > Bottom (Listen Later) > Left/Right
-    // But natural simple check:
-
-    if (dy < -_actionThreshold) {
-      // SWIPE TOP -> PLAY
-      _playTopCard();
-    } else if (dy > _actionThreshold) {
-      // SWIPE BOTTOM -> LISTEN LATER
-      _listenLaterTopCard();
-    } else if (dx < -_actionThreshold) {
-      // SWIPE LEFT -> NEXT (Skip)
-      _skipTopCard();
-    } else if (dx > _actionThreshold) {
-      // SWIPE RIGHT -> UNDO (Previous)
-      _undoLastAction();
-    } else {
-      // Return to center (spring back)
-      setState(() {
-        _dragOffset = Offset.zero;
-      });
+      case SwipeDirection.right:
+        // Undo (Special case handled by undo button or gesture?)
+        // The requirements say Swipe Right -> Undo previous action.
+        // Logic: Swiping RIGHT on the CURRENT card usually means "Keeping it" or "Back".
+        // BUT the user prompt code implies: "SWIPE RIGHT -> UNDO (Previous)"
+        // Typically Undo restores a PREVIOUSLY removed card.
+        // So swiping the CURRENT card right to UNDO means... what?
+        // Looking at previous logic:
+        // _undoLastAction() -> _history.removeLast() -> _cards.add(previous)
+        // Check previous code:
+        // } else if (dx > _actionThreshold) {
+        //   // SWIPE RIGHT -> UNDO (Previous)
+        //   _undoLastAction();
+        // }
+        // Wait, if I swipe the *current* card right, I trigger undo of the *previous* action?
+        // Yes, that's what the code did.
+        _undoLastAction();
+        break;
     }
-  }
-
-  void _playTopCard() {
-    if (_cards.isEmpty) return;
-    final card = _cards.last;
-
-    // Animate away perfectly up
-    // In a real app we might animate, but for MVP just navigate
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => AudioPlayerScreen(meditation: card)),
-    );
-
-    // Reset offset when coming back (or if they cancel nav)
-    setState(() {
-      _dragOffset = Offset.zero;
-      // Should we remove it or keep it?
-      // User might want to keep browsing. Let's keep it but reset position.
-    });
-  }
-
-  void _listenLaterTopCard() {
-    if (_cards.isEmpty) return;
-    final card = _cards.last;
-
-    widget.onListenLater(card);
-
-    // Remove card after action
-    setState(() {
-      _history.add(card);
-      _cards.removeLast();
-      _dragOffset = Offset.zero;
-    });
-  }
-
-  void _skipTopCard() {
-    if (_cards.isEmpty) return;
-    final card = _cards.last;
-
-    setState(() {
-      _history.add(card);
-      _cards.removeLast();
-      _dragOffset = Offset.zero;
-    });
   }
 
   void _undoLastAction() {
-    if (_history.isEmpty) {
-      // Just reset if user tried to swipe right but no history
-      setState(() {
-        _dragOffset = Offset.zero;
-      });
-      return;
-    }
+    if (_history.isEmpty) return;
 
     final previous = _history.removeLast();
     setState(() {
       _cards.add(previous); // Add back to top
-      _dragOffset = Offset.zero;
     });
   }
 
@@ -188,11 +144,8 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
       );
     }
 
-    // We only need to render the top card (interactive) and maybe the one below it (for visuals)
-    // List is structured so LAST element is ON TOP.
     final topIndex = _cards.length - 1;
     final topCard = _cards[topIndex];
-
     final backCard = (topIndex > 0) ? _cards[topIndex - 1] : null;
 
     return Center(
@@ -204,39 +157,27 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
             width: 280,
             child: Stack(
               alignment: Alignment.center,
-              // clipBehavior: Clip.none, // Not needed anymore
               children: [
-                // Next Card (Behind)
+                // Next Card (Behind) - Static
                 if (backCard != null)
                   Transform.scale(
                     scale: 0.95,
-                    child: _buildCardUI(backCard, isFront: false),
+                    child: DiscoveryCard(meditation: backCard, isFront: false),
                   ),
 
-                // Front Card (Draggable)
-                GestureDetector(
-                  onPanStart: _onPanStart,
-                  onPanUpdate: _onPanUpdate,
-                  onPanEnd: _onPanEnd,
-                  child: Transform.translate(
-                    offset: _dragOffset,
-                    child: Transform.rotate(
-                      angle:
-                          _dragOffset.dx *
-                          0.0005, // Subtle rotation while dragging
-                      child: _buildCardUI(topCard, isFront: true),
-                    ),
-                  ),
+                // Front Card (Draggable) - Handles its own drag state
+                // Key is important to rebuild state when topCard changes
+                _DraggableCard(
+                  key: ValueKey(topCard.id),
+                  meditation: topCard,
+                  onSwipe: _handleSwipe,
                 ),
-
-                // Interaction Hints (Overlay based on drag)
-                if (_isDragging) _buildDragOverlay(),
               ],
             ),
           ),
 
-          const SizedBox(width: 16), // Spacing between card and button
-          // Saved Collection Button (Now in Row)
+          const SizedBox(width: 16),
+          // Saved Collection Button
           Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: GestureDetector(
@@ -267,34 +208,120 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
       ),
     );
   }
+}
 
-  Widget _buildDragOverlay() {
-    // Show icons based on direction
+class _DraggableCard extends StatefulWidget {
+  final Meditation meditation;
+  final Function(SwipeDirection) onSwipe;
+
+  const _DraggableCard({
+    required Key key,
+    required this.meditation,
+    required this.onSwipe,
+  }) : super(key: key);
+
+  @override
+  State<_DraggableCard> createState() => _DraggableCardState();
+}
+
+class _DraggableCardState extends State<_DraggableCard> {
+  final ValueNotifier<Offset> _dragNotifier = ValueNotifier(Offset.zero);
+  bool _isDragging = false;
+  static const double _actionThreshold = 100.0;
+
+  @override
+  void dispose() {
+    _dragNotifier.dispose();
+    super.dispose();
+  }
+
+  void _onPanStart(DragStartDetails details) {
+    setState(() {
+      _isDragging = true;
+    });
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    _dragNotifier.value += details.delta;
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    setState(() {
+      _isDragging = false;
+    });
+
+    final offset = _dragNotifier.value;
+    final dx = offset.dx;
+    final dy = offset.dy;
+
+    if (dy < -_actionThreshold) {
+      widget.onSwipe(SwipeDirection.top);
+    } else if (dy > _actionThreshold) {
+      widget.onSwipe(SwipeDirection.bottom);
+    } else if (dx < -_actionThreshold) {
+      widget.onSwipe(SwipeDirection.left);
+    } else if (dx > _actionThreshold) {
+      widget.onSwipe(SwipeDirection.right);
+      _resetPosition();
+    } else {
+      _resetPosition();
+    }
+  }
+
+  void _resetPosition() {
+    _dragNotifier.value = Offset.zero;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Offset>(
+      valueListenable: _dragNotifier,
+      child: DiscoveryCard(meditation: widget.meditation, isFront: true),
+      builder: (context, offset, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            GestureDetector(
+              onPanStart: _onPanStart,
+              onPanUpdate: _onPanUpdate,
+              onPanEnd: _onPanEnd,
+              child: Transform.translate(
+                offset: offset,
+                child: Transform.rotate(
+                  angle: offset.dx * 0.0005,
+                  child: child!,
+                ),
+              ),
+            ),
+            if (_isDragging) _buildDragOverlay(offset),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDragOverlay(Offset offset) {
     IconData? icon;
     Color color = Colors.transparent;
-    Alignment alignment = Alignment.center; // default
+    Alignment alignment = Alignment.center;
 
-    double dx = _dragOffset.dx;
-    double dy = _dragOffset.dy;
+    final dx = offset.dx;
+    final dy = offset.dy;
 
     if (dy < -50) {
-      // Top
       icon = Icons.play_arrow_rounded;
       color = Colors.white;
       alignment = Alignment.topCenter;
     } else if (dy > 50) {
-      // Bottom
       icon = Icons.bookmark_rounded;
       color = AppTheme.orange;
       alignment = Alignment.bottomCenter;
     } else if (dx < -50) {
-      // Left
       icon = Icons.close_rounded;
       color = Colors.redAccent;
       alignment = Alignment.centerLeft;
     } else if (dx > 50) {
-      // Right
-      icon = Icons.replay_rounded; // Undo
+      icon = Icons.replay_rounded;
       color = Colors.yellow[700]!;
       alignment = Alignment.centerRight;
     }
@@ -316,8 +343,20 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
       ),
     );
   }
+}
 
-  Widget _buildCardUI(Meditation data, {required bool isFront}) {
+class DiscoveryCard extends StatelessWidget {
+  final Meditation meditation;
+  final bool isFront;
+
+  const DiscoveryCard({
+    super.key,
+    required this.meditation,
+    required this.isFront,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: 280,
       decoration: BoxDecoration(
@@ -325,9 +364,7 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
         borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(
-              alpha: 0.2,
-            ), // Slightly darker shadow
+            color: Colors.black.withValues(alpha: 0.2),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -339,11 +376,12 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
           fit: StackFit.expand,
           children: [
             // 1. Full Cover Image
-            if (data.coverImage.isNotEmpty)
-              CachedNetworkImage(
-                imageUrl: data.coverImage,
+            if (meditation.coverImage.isNotEmpty)
+              RitualCoverImage(
+                imageUrl: meditation.coverImage,
                 fit: BoxFit.cover,
-                memCacheWidth: 600, // Optimization
+                memCacheWidth: 600,
+                memCacheHeight: 800,
                 fadeInDuration: Duration.zero,
                 placeholder: (context, url) => Container(
                   color: AppTheme.getSageColor(context).withValues(alpha: 0.2),
@@ -366,7 +404,7 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
                 ),
               ),
 
-            // 2. Gradient Overlay (Bottom)
+            // 2. Gradient Overlay
             Positioned(
               bottom: 0,
               left: 0,
@@ -395,19 +433,17 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Title Chip (Can be wider)
-                  _buildInfoChip(
-                    data.title,
-                    isHighlight: true, // Distinct style for title
-                  ),
+                  _buildInfoChip(context, meditation.title, isHighlight: true),
                   const SizedBox(height: 8),
-                  // Row for Category + Duration
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _buildInfoChip(data.category.toUpperCase()),
-                      _buildInfoChip("${data.duration} min"),
+                      _buildInfoChip(
+                        context,
+                        meditation.category.toUpperCase(),
+                      ),
+                      _buildInfoChip(context, meditation.formattedDuration),
                     ],
                   ),
                 ],
@@ -419,13 +455,17 @@ class _DiscoveryCardStackState extends State<DiscoveryCardStack> {
     );
   }
 
-  Widget _buildInfoChip(String label, {bool isHighlight = false}) {
+  Widget _buildInfoChip(
+    BuildContext context,
+    String label, {
+    bool isHighlight = false,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: isHighlight
             ? AppTheme.getPrimary(context).withValues(alpha: 0.9)
-            : Colors.white.withValues(alpha: 0.15), // Glassy look
+            : Colors.white.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: Colors.white.withValues(alpha: isHighlight ? 0.3 : 0.1),

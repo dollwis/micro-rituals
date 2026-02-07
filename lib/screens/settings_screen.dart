@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import 'premium_plans_screen.dart';
@@ -15,6 +15,7 @@ import 'profile_settings_screen.dart';
 import 'admin_upload_screen.dart';
 import '../providers/audio_player_provider.dart';
 import 'privacy_policy_screen.dart';
+import '../services/migration_service.dart';
 
 /// Comprehensive Settings Screen
 /// Features: Profile header, stats cards, settings menu, account actions
@@ -32,7 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // States
   bool _notificationsEnabled = false;
-  bool _zenMode = false;
+
   TimeOfDay _reminderTime = const TimeOfDay(hour: 16, minute: 0);
   bool _isLoading = true;
 
@@ -71,15 +72,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
     final enabled = await _notificationService.areNotificationsEnabled();
     final time = await _notificationService.getReminderTime();
-    final zenMode = prefs.getBool('zen_mode') ?? false;
 
     setState(() {
       _notificationsEnabled = enabled;
       _reminderTime = time;
-      _zenMode = zenMode;
+
       _isLoading = false;
     });
   }
@@ -140,22 +139,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     await _notificationService.setNotificationsEnabled(value);
     setState(() => _notificationsEnabled = value);
-  }
-
-  Future<void> _toggleZenMode(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('zen_mode', value);
-    setState(() => _zenMode = value);
-
-    // In production, sync to Firebase user document
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(value ? 'Zen Mode enabled' : 'Daylight Mode enabled'),
-          backgroundColor: AppTheme.sageGreen,
-        ),
-      );
-    }
   }
 
   Future<void> _selectTime() async {
@@ -240,6 +223,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _buildSectionHeader('ADMIN'),
                     const SizedBox(height: 12),
                     _buildAdminTile(),
+                    const SizedBox(height: 12),
+                    _buildMigrationTile(), // Added Migration Tile
                     const SizedBox(height: 32),
                   ],
 
@@ -1033,6 +1018,106 @@ class _SettingsScreenState extends State<SettingsScreen> {
             MaterialPageRoute(builder: (_) => const AdminUploadScreen()),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildMigrationTile() {
+    return GestureDetector(
+      onTap: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Update All Meditations'),
+            content: const Text(
+              'This will extract duration for all meditations. This may take a while.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Start'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed == true && mounted) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) =>
+                const Center(child: CircularProgressIndicator()),
+          );
+
+          try {
+            await MigrationService().extractDurationsForAllMeditations();
+            if (mounted) {
+              Navigator.pop(context); // Close loading
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('✅ Migration complete!')),
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              Navigator.pop(context); // Close loading
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('Error: $e')));
+            }
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.getCardColor(context),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.getBorderColor(context)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.purple.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.update, color: Colors.purple),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Run Migration',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.getTextColor(context),
+                    ),
+                  ),
+                  Text(
+                    'Extract durations for existing items',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppTheme.getMutedColor(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: AppTheme.getMutedColor(context),
+            ),
+          ],
+        ),
       ),
     );
   }

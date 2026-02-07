@@ -64,20 +64,22 @@ class _BreathingCoverImageState extends State<BreathingCoverImage>
         children: [
           // Breathing Rings
           if (widget.isPlaying)
-            AnimatedBuilder(
-              animation: _pulseController,
-              builder: (context, child) {
-                return CustomPaint(
-                  painter: _RingsPainter(
-                    progress: _pulseController.value,
-                    color: AppTheme.isDark(context)
-                        ? Colors.white
-                        : AppTheme.getPrimary(context),
-                    baseRadius: widget.size / 2,
-                  ),
-                  size: Size(widget.size * 1.4, widget.size * 1.4),
-                );
-              },
+            RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, child) {
+                  return CustomPaint(
+                    painter: _RingsPainter(
+                      progress: _pulseController.value,
+                      color: AppTheme.isDark(context)
+                          ? Colors.white
+                          : AppTheme.getPrimary(context),
+                      baseRadius: widget.size / 2,
+                    ),
+                    size: Size(widget.size * 1.4, widget.size * 1.4),
+                  );
+                },
+              ),
             ),
 
           // Main Image Circle
@@ -138,6 +140,7 @@ class _RingsPainter extends CustomPainter {
   final double progress;
   final Color color;
   final double baseRadius;
+  final Paint _paint = Paint(); // Cache Paint object
 
   _RingsPainter({
     required this.progress,
@@ -148,7 +151,7 @@ class _RingsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = size.center(Offset.zero);
-    final paint = Paint()
+    _paint
       ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5; // Thinner lines
@@ -162,9 +165,9 @@ class _RingsPainter extends CustomPainter {
       // Opacity Logic
       final opacity = (0.2 + (0.5 * progress)).clamp(0.0, 0.8);
 
-      paint.color = color.withValues(alpha: opacity);
+      _paint.color = color.withValues(alpha: opacity);
 
-      canvas.drawCircle(center, radius, paint);
+      canvas.drawCircle(center, radius, _paint);
     }
   }
 

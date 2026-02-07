@@ -518,7 +518,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       runSpacing: 6,
                       children: [
                         _buildCardInfoChip(data.category.toUpperCase()),
-                        _buildCardInfoChip("${data.duration} min"),
+                        _buildCardInfoChip(data.formattedDuration),
                         Builder(
                           builder: (context) {
                             final isSaved =

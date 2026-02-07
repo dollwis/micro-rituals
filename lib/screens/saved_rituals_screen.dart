@@ -367,7 +367,7 @@ class _SavedRitualsListState extends State<SavedRitualsList> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '${ritual.duration} min',
+                      ritual.formattedDuration,
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.getMutedColor(context),

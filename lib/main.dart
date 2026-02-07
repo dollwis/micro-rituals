@@ -13,8 +13,6 @@ import 'widgets/loading_screen.dart';
 
 import 'dart:async';
 
-import 'package:just_audio_background/just_audio_background.dart';
-
 Future<void> main() async {
   //   await JustAudioBackground.init(
   //     androidNotificationChannelId: 'com.ryanheise.bg_demo.channel.audio',
@@ -54,14 +52,49 @@ Future<void> main() async {
 
 /// Daily MicroRituals - Calm Technology Wellness Tracker
 /// Redesigned with sage green theme and dashboard layout
-class DailyMicroRitualsApp extends StatelessWidget {
+class DailyMicroRitualsApp extends StatefulWidget {
   const DailyMicroRitualsApp({super.key});
 
   @override
+  State<DailyMicroRitualsApp> createState() => _DailyMicroRitualsAppState();
+}
+
+class _DailyMicroRitualsAppState extends State<DailyMicroRitualsApp> {
+  final ThemeProvider _themeProvider = ThemeProvider();
+  bool _themeLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    await _themeProvider.load();
+    if (mounted) {
+      setState(() => _themeLoaded = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _themeProvider.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (!_themeLoaded) {
+      // Show loading screen while theme is initializing
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: LoadingScreen(),
+      );
+    }
+
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider.value(value: _themeProvider),
         ChangeNotifierProvider(create: (_) => AudioPlayerProvider()),
       ],
       child: Consumer<ThemeProvider>(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,11 +44,24 @@ class ThemeProvider extends ChangeNotifier {
     await prefs.setBool(_keyZenMode, value);
   }
 
+  Timer? _saveTimer;
+
   Future<void> setVariant(ThemeVariant variant) async {
     if (_currentVariant == variant) return;
     _currentVariant = variant;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyVariant, variant.toString());
+
+    // Debounce saving to SharedPreferences
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 300), () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyVariant, variant.toString());
+    });
+  }
+
+  @override
+  void dispose() {
+    _saveTimer?.cancel();
+    super.dispose();
   }
 }

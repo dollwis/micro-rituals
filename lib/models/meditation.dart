@@ -3,6 +3,7 @@ class Meditation {
   final String id;
   final String title;
   final int duration; // in minutes
+  final int? durationSeconds; // precise duration
   final String category; // Sleep, Focus, Anxiety, etc.
   final String audioUrl;
   final String coverImage;
@@ -18,6 +19,7 @@ class Meditation {
     required this.coverImage,
     this.isPremium = false,
     this.isAdRequired = false,
+    this.durationSeconds,
   });
 
   /// Create from Firestore document
@@ -31,6 +33,7 @@ class Meditation {
       coverImage: json['cover_image'] as String? ?? '',
       isPremium: json['is_premium'] as bool? ?? false,
       isAdRequired: json['is_ad_required'] as bool? ?? false,
+      durationSeconds: json['duration_seconds'] as int?,
     );
   }
 
@@ -44,6 +47,7 @@ class Meditation {
       'cover_image': coverImage,
       'is_premium': isPremium,
       'is_ad_required': isAdRequired,
+      'duration_seconds': durationSeconds,
     };
   }
 
@@ -68,6 +72,7 @@ class Meditation {
     String? coverImage,
     bool? isPremium,
     bool? isAdRequired,
+    int? durationSeconds,
   }) {
     return Meditation(
       id: id ?? this.id,
@@ -78,6 +83,17 @@ class Meditation {
       coverImage: coverImage ?? this.coverImage,
       isPremium: isPremium ?? this.isPremium,
       isAdRequired: isAdRequired ?? this.isAdRequired,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
     );
+  }
+
+  /// Get formatted duration string
+  String get formattedDuration {
+    if (durationSeconds != null) {
+      final minutes = durationSeconds! ~/ 60;
+      final seconds = durationSeconds! % 60;
+      return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '$duration min';
   }
 }

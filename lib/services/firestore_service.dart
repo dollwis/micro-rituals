@@ -152,10 +152,11 @@ class FirestoreService {
   Future<void> logRitualMinutes(
     String uid,
     int minutes, {
+    int? seconds,
     String ritualName = 'Ritual',
     String? coverImageUrl,
   }) async {
-    if (minutes <= 0) return;
+    if (minutes <= 0 && (seconds == null || seconds <= 0)) return;
     await getOrCreateUser(uid); // Ensure exists
 
     final now = DateTime.now();
@@ -189,6 +190,9 @@ class FirestoreService {
         final existing = history[todayIndex];
         await _localUserService.updateHistoryEntry(existing['id'], {
           'duration_minutes': (existing['duration_minutes'] as int) + minutes,
+          if (seconds != null)
+            'duration_seconds':
+                ((existing['duration_seconds'] as int?) ?? 0) + seconds,
           'completed_at_iso': now.toIso8601String(), // Use ISO for local
           'completed_at': now.millisecondsSinceEpoch, // For compatibility
           if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
@@ -198,6 +202,7 @@ class FirestoreService {
         await _localUserService.addHistoryEntry({
           'ritual_name': ritualName,
           'duration_minutes': minutes,
+          if (seconds != null) 'duration_seconds': seconds,
           'completed_at_iso': now.toIso8601String(),
           'completed_at': now.millisecondsSinceEpoch,
           if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
@@ -233,6 +238,7 @@ class FirestoreService {
       // Aggregate with existing entry for today
       await historyQuery.docs.first.reference.update({
         'duration_minutes': FieldValue.increment(minutes),
+        if (seconds != null) 'duration_seconds': FieldValue.increment(seconds),
         'completed_at': Timestamp.fromDate(now),
         if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
       });
@@ -241,6 +247,7 @@ class FirestoreService {
       await _usersCollection.doc(uid).collection('completions').add({
         'ritual_name': ritualName,
         'duration_minutes': minutes,
+        if (seconds != null) 'duration_seconds': seconds,
         'completed_at': Timestamp.fromDate(now),
         if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
       });
@@ -350,6 +357,7 @@ class FirestoreService {
       await logRitualMinutes(
         uid,
         minutes,
+        seconds: ritualDurationSeconds,
         ritualName: ritualName,
         coverImageUrl: coverImageUrl,
       );
@@ -726,6 +734,25 @@ class FirestoreService {
   /// Get all meditations
   Future<List<Meditation>> getAllMeditations() async {
     final snapshot = await _meditationsCollection.get();
+    return snapshot.docs
+        .map((doc) => Meditation.fromJson(doc.data(), doc.id))
+        .toList();
+  }
+
+  /// Fetch meditations with pagination
+  Future<List<Meditation>> fetchMeditations({
+    int limit = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
+    Query<Map<String, dynamic>> query = _meditationsCollection
+        .orderBy('title') // Consistent ordering is required for pagination
+        .limit(limit);
+
+    if (startAfter != null) {
+      query = query.startAfterDocument(startAfter);
+    }
+
+    final snapshot = await query.get();
     return snapshot.docs
         .map((doc) => Meditation.fromJson(doc.data(), doc.id))
         .toList();

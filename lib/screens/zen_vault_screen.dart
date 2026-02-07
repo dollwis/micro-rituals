@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import '../widgets/ritual_cover_image.dart';
 import '../models/meditation.dart';
 import '../services/content_access_service.dart';
 import '../services/rewarded_ad_service.dart';
@@ -538,7 +538,7 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: meditation.coverImage.isNotEmpty
-                        ? CachedNetworkImage(
+                        ? RitualCoverImage(
                             imageUrl: meditation.coverImage,
                             fit: BoxFit.cover,
                             memCacheWidth: 150, // Optimize
@@ -594,7 +594,7 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            '${meditation.duration} min',
+                            meditation.formattedDuration,
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.getMutedColor(context),

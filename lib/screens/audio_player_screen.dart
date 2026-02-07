@@ -154,30 +154,52 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                                               overlayRadius: 0,
                                             ),
                                       ),
-                                      child: Slider(
-                                        value: player.position.inSeconds
-                                            .toDouble()
-                                            .clamp(
-                                              0.0,
-                                              player.duration.inSeconds
-                                                          .toDouble() >
-                                                      0
-                                                  ? player.duration.inSeconds
-                                                        .toDouble()
-                                                  : 100.0,
-                                            ),
-                                        max:
-                                            player.duration.inSeconds
-                                                    .toDouble() >
-                                                0
-                                            ? player.duration.inSeconds
-                                                  .toDouble()
-                                            : 100,
-                                        onChanged: (value) async {
-                                          final position = Duration(
-                                            seconds: value.toInt(),
+                                      child: ValueListenableBuilder<Duration>(
+                                        valueListenable:
+                                            player.positionNotifier,
+                                        builder: (context, position, child) {
+                                          return Slider(
+                                            value: position.inSeconds
+                                                .toDouble()
+                                                .clamp(
+                                                  0.0,
+                                                  player.duration.inSeconds
+                                                              .toDouble() >
+                                                          0
+                                                      ? player
+                                                            .duration
+                                                            .inSeconds
+                                                            .toDouble()
+                                                      : (widget
+                                                                .meditation
+                                                                .durationSeconds
+                                                                ?.toDouble() ??
+                                                            widget
+                                                                    .meditation
+                                                                    .duration *
+                                                                60.0),
+                                                ),
+                                            max:
+                                                player.duration.inSeconds
+                                                        .toDouble() >
+                                                    0
+                                                ? player.duration.inSeconds
+                                                      .toDouble()
+                                                : (widget
+                                                          .meditation
+                                                          .durationSeconds
+                                                          ?.toDouble() ??
+                                                      widget
+                                                              .meditation
+                                                              .duration *
+                                                          60.0),
+                                            onChanged: (value) async {
+                                              final newPos = Duration(
+                                                seconds: value.toInt(),
+                                              );
+                                              await player.seek(newPos);
+                                            },
                                           );
-                                          await player.seek(position);
                                         },
                                       ),
                                     ),
@@ -186,13 +208,19 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                                       mainAxisAlignment:
                                           MainAxisAlignment.spaceBetween,
                                       children: [
-                                        Text(
-                                          _formatTime(player.position),
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: mutedColor,
-                                          ),
+                                        ValueListenableBuilder<Duration>(
+                                          valueListenable:
+                                              player.positionNotifier,
+                                          builder: (context, position, child) {
+                                            return Text(
+                                              _formatTime(position),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                color: mutedColor,
+                                              ),
+                                            );
+                                          },
                                         ),
                                         Text(
                                           _formatTime(player.duration),
@@ -242,32 +270,37 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                                   const SizedBox(width: 8),
 
                                   // Play/Pause
-                                  GestureDetector(
-                                    onTap: player.togglePlayPause,
-                                    child: Container(
-                                      width: 64, // Reduced size
-                                      height: 64,
-                                      decoration: BoxDecoration(
-                                        color: primaryColor,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: primaryColor.withValues(
-                                              alpha: 0.4,
-                                            ),
-                                            blurRadius: 16,
-                                            offset: const Offset(0, 8),
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: player.isPlayingNotifier,
+                                    builder: (context, isPlaying, child) {
+                                      return GestureDetector(
+                                        onTap: player.togglePlayPause,
+                                        child: Container(
+                                          width: 64, // Reduced size
+                                          height: 64,
+                                          decoration: BoxDecoration(
+                                            color: primaryColor,
+                                            shape: BoxShape.circle,
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: primaryColor.withValues(
+                                                  alpha: 0.4,
+                                                ),
+                                                blurRadius: 16,
+                                                offset: const Offset(0, 8),
+                                              ),
+                                            ],
                                           ),
-                                        ],
-                                      ),
-                                      child: Icon(
-                                        player.isPlaying
-                                            ? Icons.pause
-                                            : Icons.play_arrow_rounded,
-                                        color: Colors.white,
-                                        size: 36,
-                                      ),
-                                    ),
+                                          child: Icon(
+                                            isPlaying
+                                                ? Icons.pause
+                                                : Icons.play_arrow_rounded,
+                                            color: Colors.white,
+                                            size: 36,
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   ),
                                   const SizedBox(width: 8),
 
@@ -341,59 +374,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
                                   ),
                                 ],
                               ),
-
-                              // Volume Slider (Separate Row for space)
-                              if (availableHeight > 650) ...[
-                                const SizedBox(height: 16),
-                                Container(
-                                  width: 200,
-                                  decoration: BoxDecoration(
-                                    color: secondaryColor.withValues(
-                                      alpha: 0.3,
-                                    ),
-                                    borderRadius: BorderRadius.circular(24),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        player.volume == 0
-                                            ? Icons.volume_off
-                                            : Icons.volume_up_rounded,
-                                        size: 16,
-                                        color: primaryColor,
-                                      ),
-                                      Expanded(
-                                        child: SliderTheme(
-                                          data: SliderTheme.of(context).copyWith(
-                                            activeTrackColor: primaryColor,
-                                            inactiveTrackColor: primaryColor
-                                                .withValues(alpha: 0.2),
-                                            thumbColor: primaryColor,
-                                            trackHeight: 3,
-                                            thumbShape:
-                                                const RoundSliderThumbShape(
-                                                  enabledThumbRadius: 6,
-                                                ),
-                                            overlayShape:
-                                                const RoundSliderOverlayShape(
-                                                  overlayRadius: 12,
-                                                ),
-                                          ),
-                                          child: Slider(
-                                            value: player.volume,
-                                            onChanged: (value) =>
-                                                player.setVolume(value),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
                             ],
                           ),
                         ),

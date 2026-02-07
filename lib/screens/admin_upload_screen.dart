@@ -21,7 +21,7 @@ class AdminUploadScreen extends StatefulWidget {
 class _AdminUploadScreenState extends State<AdminUploadScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
-  final _durationController = TextEditingController();
+  // final _durationController = TextEditingController(); // REMOVED
   final _uuid = const Uuid();
   final _firestoreService = FirestoreService();
 
@@ -43,7 +43,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   @override
   void dispose() {
     _titleController.dispose();
-    _durationController.dispose();
+    // _durationController.dispose();
     super.dispose();
   }
 
@@ -73,9 +73,9 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
                 player.duration; // often available after setFilePath
             setState(() {
               _audioDuration = duration;
-              if (duration != null) {
-                _durationController.text = duration.inMinutes.toString();
-              }
+              // if (duration != null) {
+              //   _durationController.text = duration.inMinutes.toString();
+              // }
             });
           }
         } catch (e) {
@@ -140,6 +140,22 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       }
       audioUrl = await audioRef.getDownloadURL();
 
+      // Ensure we have duration
+      if (_audioDuration == null) {
+        // If we didn't get it from file picker (e.g. Web), try getting it from URL now
+        setState(() => _uploadStatus = 'Calculating duration...');
+        final player = AudioPlayer();
+        try {
+          // Just Audio can load from URL
+          final duration = await player.setUrl(audioUrl);
+          _audioDuration = duration;
+        } catch (e) {
+          debugPrint('Error getting duration from URL: $e');
+        } finally {
+          player.dispose();
+        }
+      }
+
       // 2. Upload Cover Image (if selected)
       String? coverImageUrl;
       if (_coverImageFile != null) {
@@ -159,11 +175,10 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
       // 3. Create Firestore Entry
       setState(() => _uploadStatus = 'Saving meditation...');
 
-      final durationMinutes =
-          int.tryParse(_durationController.text) ??
-          ((_audioDuration?.inSeconds ?? 0) ~/ 60);
+      // Use calculated duration or default to 1 min
+      final durationSeconds = _audioDuration?.inSeconds ?? 60;
+      final durationMinutes = _audioDuration?.inMinutes ?? 1;
 
-      // Ensure at least 1 minute if there is any duration, or 0 if none
       final finalDuration = durationMinutes > 0 ? durationMinutes : 1;
 
       final meditation = Meditation(
@@ -171,6 +186,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
         title: _titleController.text.trim(),
         category: _selectedCategory,
         duration: finalDuration,
+        durationSeconds: durationSeconds,
         audioUrl: audioUrl,
         coverImage: coverImageUrl ?? '',
         isPremium: _isPremium,
@@ -200,7 +216,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   void _resetForm() {
     setState(() {
       _titleController.clear();
-      _durationController.clear();
+      // _durationController.clear();
       _selectedCategory = Meditation.categories.first;
       _isPremium = false;
       _isAdRequired = false;
@@ -234,9 +250,15 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
             unselectedLabelColor: AppTheme.getMutedColor(context),
             indicatorColor: AppTheme.getPrimary(context),
             labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-            tabs: const [
-              Tab(text: 'Upload New'),
-              Tab(text: 'Manage Content'),
+            tabs: [
+              const Tab(text: 'Upload New'),
+              StreamBuilder<List<Meditation>>(
+                stream: _firestoreService.streamMeditations(),
+                builder: (context, snapshot) {
+                  final count = snapshot.hasData ? snapshot.data!.length : 0;
+                  return Tab(text: 'Manage Content ($count)');
+                },
+              ),
             ],
           ),
         ),
@@ -313,7 +335,8 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Duration Input
+            // Duration Input REMOVED
+            /*
             TextFormField(
               controller: _durationController,
               keyboardType: TextInputType.number,
@@ -326,6 +349,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
               },
             ),
             const SizedBox(height: 16),
+            */
 
             // Image Picker
             _buildFilePicker(

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'ritual_cover_image.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
@@ -50,8 +50,14 @@ class RitualHistoryList extends StatelessWidget {
             final prevDuration = prev['duration_minutes'] as int? ?? 0;
             final currDuration = completion['duration_minutes'] as int? ?? 0;
 
+            final prevSeconds =
+                prev['duration_seconds'] as int? ?? (prevDuration * 60);
+            final currSeconds =
+                completion['duration_seconds'] as int? ?? (currDuration * 60);
+
             // Update the previous entry with new total
             prev['duration_minutes'] = prevDuration + currDuration;
+            prev['duration_seconds'] = prevSeconds + currSeconds;
 
             // Add ID to list
             List<String> ids = prev['ids'] as List<String>;
@@ -77,7 +83,17 @@ class RitualHistoryList extends StatelessWidget {
                   .toDate();
               final dayName = _getDayName(completedAt.weekday);
               final timeStr = _formatTime(completedAt);
-              final duration = '${completion['duration_minutes'] ?? 0}m';
+              final completionSeconds = completion['duration_seconds'] as int?;
+              final completionMinutes =
+                  completion['duration_minutes'] as int? ?? 0;
+              final String duration;
+              if (completionSeconds != null && completionSeconds > 0) {
+                final m = completionSeconds ~/ 60;
+                final s = completionSeconds % 60;
+                duration = '${m}:${s.toString().padLeft(2, '0')}';
+              } else {
+                duration = '${completionMinutes}m';
+              }
               final coverImageUrl = completion['cover_image_url'] as String?;
 
               return GestureDetector(
@@ -155,7 +171,7 @@ class RitualHistoryList extends StatelessWidget {
                           borderRadius: BorderRadius.circular(12),
                           child:
                               coverImageUrl != null && coverImageUrl.isNotEmpty
-                              ? CachedNetworkImage(
+                              ? RitualCoverImage(
                                   imageUrl: coverImageUrl,
                                   fit: BoxFit.cover,
                                   memCacheWidth:
