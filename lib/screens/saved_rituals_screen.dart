@@ -5,8 +5,12 @@ import '../models/firestore_user.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/offline_mode_service.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_stats_provider.dart';
 import '../screens/audio_player_screen.dart';
 import '../widgets/mini_audio_player.dart';
+import '../widgets/category_filter_chips.dart';
+import '../widgets/meditation_card.dart';
 
 class SavedRitualsScreen extends StatelessWidget {
   const SavedRitualsScreen({super.key});
@@ -41,8 +45,16 @@ class SavedRitualsList extends StatefulWidget {
 }
 
 class _SavedRitualsListState extends State<SavedRitualsList> {
-  String _selectedFilter = 'Saved'; // 'Saved' or 'Downloads'
+  final ValueNotifier<String> _selectedFilter = ValueNotifier(
+    'Saved',
+  ); // 'Saved' or 'Downloads'
   final OfflineModeService _offlineService = OfflineModeService();
+
+  @override
+  void dispose() {
+    _selectedFilter.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,14 +65,13 @@ class _SavedRitualsListState extends State<SavedRitualsList> {
 
     final firestoreService = FirestoreService();
 
-    return StreamBuilder<FirestoreUser?>(
-      stream: firestoreService.streamUserStats(uid),
-      builder: (context, userSnapshot) {
-        if (!userSnapshot.hasData) {
+    return Consumer<UserStatsProvider>(
+      builder: (context, userStatsProvider, child) {
+        final user = userStatsProvider.userStats;
+        if (user == null) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final user = userSnapshot.data!;
         final isPremium = user.isSubscriber;
 
         return Column(
@@ -72,19 +83,29 @@ class _SavedRitualsListState extends State<SavedRitualsList> {
                   horizontal: 16,
                   vertical: 8,
                 ),
-                child: Row(
-                  children: [
-                    _buildFilterChip('Saved'),
-                    const SizedBox(width: 12),
-                    _buildFilterChip('Downloads'),
-                  ],
+                child: ValueListenableBuilder<String>(
+                  valueListenable: _selectedFilter,
+                  builder: (context, selectedFilter, child) {
+                    return CategoryFilterChips(
+                      selectedCategory: selectedFilter,
+                      categories: const ['Saved', 'Downloads'],
+                      onCategorySelected: (filter) {
+                        _selectedFilter.value = filter;
+                      },
+                    );
+                  },
                 ),
               ),
 
             Expanded(
-              child: _selectedFilter == 'Downloads'
-                  ? _buildDownloadsList(firestoreService, user)
-                  : _buildSavedList(firestoreService, user),
+              child: ValueListenableBuilder<String>(
+                valueListenable: _selectedFilter,
+                builder: (context, selectedFilter, child) {
+                  return selectedFilter == 'Downloads'
+                      ? _buildDownloadsList(firestoreService, user)
+                      : _buildSavedList(firestoreService, user);
+                },
+              ),
             ),
           ],
         );
@@ -92,38 +113,7 @@ class _SavedRitualsListState extends State<SavedRitualsList> {
     );
   }
 
-  Widget _buildFilterChip(String label) {
-    final isSelected = _selectedFilter == label;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedFilter = label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppTheme.getPrimary(context)
-              : AppTheme.getCardColor(context),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected
-                ? AppTheme.getPrimary(context)
-                : AppTheme.getBorderColor(context),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            color: isSelected
-                ? (AppTheme.isDark(context)
-                      ? AppTheme.whiteText
-                      : AppTheme.darkText)
-                : AppTheme.getMutedColor(context),
-          ),
-        ),
-      ),
-    );
-  }
+  // Removed _buildFilterChip - now using CategoryFilterChips widget
 
   Widget _buildDownloadsList(
     FirestoreService firestoreService,
@@ -288,149 +278,24 @@ class _SavedRitualsListState extends State<SavedRitualsList> {
     required bool isDownloadView,
     required VoidCallback onRemove,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.getCardColor(context),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.getBorderColor(context)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Cover Image
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppTheme.getPrimary(context).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-              image: ritual.coverImage.isNotEmpty
-                  ? DecorationImage(
-                      image: NetworkImage(ritual.coverImage),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: ritual.coverImage.isEmpty
-                ? Icon(
-                    Icons.self_improvement,
-                    color: AppTheme.getPrimary(context),
-                    size: 24,
-                  )
-                : null,
-          ),
-          const SizedBox(width: 16),
+    return MeditationCard(
+      meditation: ritual,
+      variant: MeditationCardVariant.compact,
+      isDownloadView: isDownloadView,
+      onRemove: onRemove,
+      onPlay: () {
+        // Auto-remove from Saved list on play
+        if (!isDownloadView) {
+          onRemove();
+        }
 
-          // Details
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  ritual.title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.getTextColor(context),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.getSageColor(
-                          context,
-                        ).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        ritual.category.toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.getSageColor(context),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      ritual.formattedDuration,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.getMutedColor(context),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AudioPlayerScreen(meditation: ritual),
           ),
-
-          // Actions Row
-          // Remove Button
-          GestureDetector(
-            onTap: onRemove,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              child: Icon(
-                isDownloadView ? Icons.delete_outline : Icons.close,
-                color: isDownloadView
-                    ? Colors.red.withValues(alpha: 0.7)
-                    : AppTheme.getMutedColor(context),
-                size: 20,
-              ),
-            ),
-          ),
-
-          // Play Button
-          GestureDetector(
-            onTap: () {
-              // Logic: Only remove from Saved list on play?
-              // Existing logic: "Auto-remove when played" for Saved list toggled by user preference?
-              // The user requirement didn't specify auto-remove, but the original code did:
-              // "Auto-remove when played" -> firestoreService.toggleListenLater(uid, ritual.id, false);
-              // I will KEEP that behavior for Saved list, but DIFFERENT for Downloads (don't delete on play).
-
-              if (!isDownloadView) {
-                onRemove();
-              }
-
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AudioPlayerScreen(meditation: ritual),
-                ),
-              );
-            },
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.getPrimary(context).withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.play_arrow_rounded,
-                color: AppTheme.getPrimary(context),
-                size: 24,
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

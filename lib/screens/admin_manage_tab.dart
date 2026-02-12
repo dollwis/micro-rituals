@@ -3,6 +3,7 @@ import '../models/meditation.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/edit_ritual_dialog.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart'; // Import just_audio
 
 class AdminManageTab extends StatefulWidget {
@@ -15,6 +16,84 @@ class AdminManageTab extends StatefulWidget {
 class _AdminManageTabState extends State<AdminManageTab> {
   final _firestoreService = FirestoreService();
   bool _isSyncing = false;
+  final Set<String> _selectedIds = {};
+
+  bool get _isSelectionMode => _selectedIds.isNotEmpty;
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selectedIds.length;
+    if (count == 0) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.getCardColor(context),
+        title: Text(
+          'Delete $count Rituals?',
+          style: TextStyle(color: AppTheme.getTextColor(context)),
+        ),
+        content: Text(
+          'Are you sure you want to delete these $count items? This cannot be undone.',
+          style: TextStyle(
+            color: AppTheme.getTextColor(context).withValues(alpha: 0.8),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: AppTheme.getMutedColor(context)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _isSyncing = true); // Reuse syncing spinner for deletion
+      try {
+        // Create a copy of ids to iterate safely
+        final idsToDelete = List<String>.from(_selectedIds);
+
+        // Delete each
+        for (final id in idsToDelete) {
+          await _firestoreService.deleteMeditation(id);
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Deleted $count rituals')));
+          setState(() {
+            _selectedIds.clear();
+            _isSyncing = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isSyncing = false);
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error deleting items: $e')));
+        }
+      }
+    }
+  }
 
   Future<void> _syncDurations() async {
     setState(() => _isSyncing = true);
@@ -27,10 +106,6 @@ class _AdminManageTabState extends State<AdminManageTab> {
       final player = AudioPlayer();
 
       for (final ritual in rituals) {
-        // Check if durationSeconds is missing or likely defaulted (e.g. exactly minutes * 60)
-        // Actually, let's just update any that don't have durationSeconds explicitly set to non-zero
-        // OR if you want to force update all, remove the check.
-        // For now, let's update if durationSeconds is null or 0.
         if (ritual.durationSeconds == null || ritual.durationSeconds == 0) {
           try {
             if (ritual.audioUrl.isNotEmpty) {
@@ -41,9 +116,7 @@ class _AdminManageTabState extends State<AdminManageTab> {
 
                 final updatedRitual = ritual.copyWith(
                   durationSeconds: seconds,
-                  duration: minutes > 0
-                      ? minutes
-                      : 1, // Update minutes too if needed
+                  duration: minutes > 0 ? minutes : 1,
                 );
 
                 await _firestoreService.updateMeditation(updatedRitual);
@@ -108,7 +181,7 @@ class _AdminManageTabState extends State<AdminManageTab> {
         content: Text(
           'Are you sure you want to delete "${ritual.title}"? This cannot be undone.',
           style: TextStyle(
-            color: AppTheme.getTextColor(context).withOpacity(0.8),
+            color: AppTheme.getTextColor(context).withValues(alpha: 0.8),
           ),
         ),
         actions: [
@@ -141,24 +214,47 @@ class _AdminManageTabState extends State<AdminManageTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isSyncing ? null : _syncDurations,
-        backgroundColor: AppTheme.getPrimary(context),
-        label: _isSyncing
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
-              )
-            : const Text(
-                'Sync Durations',
-                style: TextStyle(color: Colors.white),
-              ),
-        icon: _isSyncing ? null : const Icon(Icons.sync, color: Colors.white),
-      ),
+      floatingActionButton: _isSelectionMode
+          ? FloatingActionButton.extended(
+              onPressed: _isSyncing ? null : _deleteSelected,
+              backgroundColor: Colors.red,
+              label: _isSyncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Text(
+                      'Delete (${_selectedIds.length})',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+              icon: _isSyncing
+                  ? null
+                  : const Icon(Icons.delete, color: Colors.white),
+            )
+          : FloatingActionButton.extended(
+              onPressed: _isSyncing ? null : _syncDurations,
+              backgroundColor: AppTheme.getPrimary(context),
+              label: _isSyncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Text(
+                      'Sync Durations',
+                      style: TextStyle(color: Colors.white),
+                    ),
+              icon: _isSyncing
+                  ? null
+                  : const Icon(Icons.sync, color: Colors.white),
+            ),
       body: StreamBuilder<List<Meditation>>(
         stream: _firestoreService.streamMeditations(),
         builder: (context, snapshot) {
@@ -181,94 +277,147 @@ class _AdminManageTabState extends State<AdminManageTab> {
             );
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: rituals.length,
-            itemBuilder: (context, index) {
-              final ritual = rituals[index];
-              return Container(
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: AppTheme.getCardColor(context),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppTheme.getBorderColor(context)),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(12),
-                  leading: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      image: ritual.coverImage.isNotEmpty
-                          ? DecorationImage(
-                              image: NetworkImage(ritual.coverImage),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
-                      color: AppTheme.getBackground(context),
-                    ),
-                    child: ritual.coverImage.isEmpty
-                        ? Icon(
-                            Icons.music_note,
-                            color: AppTheme.getMutedColor(context),
-                          )
-                        : null,
-                  ),
-                  title: Text(
-                    ritual.title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.getTextColor(context),
-                    ),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${ritual.category} • ${ritual.formattedDuration}',
-                        style: TextStyle(
-                          color: AppTheme.getMutedColor(context),
-                        ),
-                      ),
-                      if (ritual.isPremium)
-                        Text(
-                          'Premium',
-                          style: TextStyle(
-                            color: AppTheme.getPrimary(context),
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      if (ritual.isAdRequired)
-                        const Text(
-                          'Ad Required',
-                          style: TextStyle(
-                            color: Colors.blue,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit_outlined),
-                        color: AppTheme.getPrimary(context),
-                        onPressed: () => _editRitual(ritual),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        color: Colors.red.withOpacity(0.7),
-                        onPressed: () => _deleteRitual(ritual),
-                      ),
-                    ],
-                  ),
-                ),
-              );
+          return WillPopScope(
+            onWillPop: () async {
+              if (_isSelectionMode) {
+                setState(() => _selectedIds.clear());
+                return false;
+              }
+              return true;
             },
+            child: ListView.builder(
+              padding: const EdgeInsets.all(24),
+              itemCount: rituals.length,
+              itemBuilder: (context, index) {
+                final ritual = rituals[index];
+                final isSelected = _selectedIds.contains(ritual.id);
+
+                return GestureDetector(
+                  onLongPress: () {
+                    // Enter selection mode if not already, and select item
+                    if (!_isSelectionMode) {
+                      HapticFeedback.mediumImpact();
+                    }
+                    _toggleSelection(ritual.id);
+                  },
+                  onTap: () {
+                    if (_isSelectionMode) {
+                      _toggleSelection(ritual.id);
+                    } else {
+                      // Original behavior or no-op since it's admin manage
+                      // Maybe verify edit? No, edit is a button.
+                      // Let's just allow tapping to trigger edit?
+                      // Old behavior didn't have tile tap.
+                      // Let's leave it as no-op or optional edit.
+                      // But effectively we want selection toggle only in mode.
+                    }
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppTheme.getPrimary(context).withValues(alpha: 0.1)
+                          : AppTheme.getCardColor(context),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppTheme.getPrimary(context)
+                            : AppTheme.getBorderColor(context),
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(12),
+                      leading: _isSelectionMode
+                          ? Transform.scale(
+                              scale: 1.2,
+                              child: Checkbox(
+                                value: isSelected,
+                                onChanged: (val) => _toggleSelection(ritual.id),
+                                activeColor: AppTheme.getPrimary(context),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            )
+                          : Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                image: ritual.coverImage.isNotEmpty
+                                    ? DecorationImage(
+                                        image: NetworkImage(ritual.coverImage),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
+                                color: AppTheme.getBackground(context),
+                              ),
+                              child: ritual.coverImage.isEmpty
+                                  ? Icon(
+                                      Icons.music_note,
+                                      color: AppTheme.getMutedColor(context),
+                                    )
+                                  : null,
+                            ),
+                      title: Text(
+                        ritual.title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.getTextColor(context),
+                        ),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${ritual.category} • ${ritual.formattedDuration}',
+                            style: TextStyle(
+                              color: AppTheme.getMutedColor(context),
+                            ),
+                          ),
+                          if (ritual.isPremium)
+                            Text(
+                              'Premium',
+                              style: TextStyle(
+                                color: AppTheme.getPrimary(context),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          if (ritual.isAdRequired)
+                            const Text(
+                              'Ad Required',
+                              style: TextStyle(
+                                color: Colors.blue,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                        ],
+                      ),
+                      trailing: _isSelectionMode
+                          ? null // Hide individual actions in selection mode
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined),
+                                  color: AppTheme.getPrimary(context),
+                                  onPressed: () => _editRitual(ritual),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  color: Colors.red.withOpacity(0.7),
+                                  onPressed: () => _deleteRitual(ritual),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                );
+              },
+            ),
           );
         },
       ),

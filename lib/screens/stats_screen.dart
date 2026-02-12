@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/firestore_user.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../widgets/ritual_history_list.dart';
+import '../widgets/weekly_activity_history.dart';
+
 import 'full_history_screen.dart';
 
 /// Stats/Reflection Screen - Detailed stats and ritual history
@@ -23,7 +26,7 @@ class _StatsScreenState extends State<StatsScreen> {
   FirestoreUser? _userStats;
   Map<String, int> _weeklyCompletions = {};
   Map<String, ActivityData> _calendarData = {};
-  bool _isLoadingWeeklyData = true;
+  bool _isLoadingWeeklyData = false; // Don't show spinner by default
 
   // Calendar month navigation
   DateTime _selectedMonth = DateTime.now();
@@ -31,6 +34,7 @@ class _StatsScreenState extends State<StatsScreen> {
   // Computed from user stats
   int get totalMinutes => _userStats?.totalMinutes ?? 0;
   int get totalSessions => _userStats?.totalCompleted ?? 0;
+  int get currentStreak => _userStats?.currentStreak ?? 0;
 
   @override
   void initState() {
@@ -50,31 +54,46 @@ class _StatsScreenState extends State<StatsScreen> {
     }
   }
 
-  Future<void> _loadWeeklyActivity() async {
+  StreamSubscription? _weeklyCompletionsSubscription;
+
+  @override
+  void dispose() {
+    _weeklyCompletionsSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _loadWeeklyActivity() {
     final uid = _authService.currentUserId;
     if (uid == null) return;
 
-    try {
-      final completions = await _firestoreService.getCompletionsForDays(
-        uid,
-        daysBack: 7,
-      );
-      final calendarData = await _firestoreService.getActivityCalendarData(
-        uid,
-        daysBack: 365, // Load 1 year for month navigation
-      );
+    // Load initial calendar data (once)
+    _firestoreService.getActivityCalendarData(uid, daysBack: 365).then((data) {
       if (mounted) {
         setState(() {
-          _weeklyCompletions = completions;
-          _calendarData = calendarData;
-          _isLoadingWeeklyData = false;
+          _calendarData = data;
         });
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingWeeklyData = false);
-      }
-    }
+    });
+
+    // Stream weekly completions (real-time)
+    _weeklyCompletionsSubscription?.cancel();
+    _weeklyCompletionsSubscription = _firestoreService
+        .streamCompletionsForDays(uid, daysBack: 7)
+        .listen(
+          (completions) {
+            if (mounted) {
+              setState(() {
+                _weeklyCompletions = completions;
+                _isLoadingWeeklyData = false;
+              });
+            }
+          },
+          onError: (e) {
+            if (mounted) {
+              setState(() => _isLoadingWeeklyData = false);
+            }
+          },
+        );
   }
 
   /// Get current week dates (Monday to Sunday)
@@ -110,6 +129,7 @@ class _StatsScreenState extends State<StatsScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
+        bottom: false,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,10 +137,17 @@ class _StatsScreenState extends State<StatsScreen> {
               // Header
               _buildHeader(),
 
-              // Mindful Minutes Card
+              // Mindful Minutes Card (Top Summary)
               _buildMindfulMinutesCard(),
 
-              // Ritual History Header
+              const SizedBox(height: 16),
+
+              // Weekly Activity History (List including current week)
+              _buildWeeklyActivityHistory(),
+
+              const SizedBox(height: 8),
+
+              // Ritual History Header (Detailed Sessions)
               _buildHistoryHeader(),
 
               // Ritual History List
@@ -140,14 +167,58 @@ class _StatsScreenState extends State<StatsScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-      child: Text(
-        'Reflection',
-        style: TextStyle(
-          fontSize: 28,
-          fontWeight: FontWeight.w700,
-          color: AppTheme.getTextColor(context),
-          letterSpacing: -0.5,
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Reflection',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.getTextColor(context),
+              letterSpacing: -0.5,
+            ),
+          ),
+          // Streak Badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppTheme.orange.withValues(alpha: 0.9),
+                  AppTheme.orange,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.orange.withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.local_fire_department,
+                  color: Colors.white,
+                  size: 16,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '$currentStreak',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -575,20 +646,29 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
+  String _formatMinutes(int minutes) {
+    if (minutes < 60) {
+      return '$minutes';
+    } else {
+      final hours = minutes ~/ 60;
+      final mins = minutes % 60;
+      return '${hours}h ${mins}m';
+    }
+  }
+
   Widget _buildMindfulMinutesCard() {
-    // Calculate weekly minutes from the same source as the chart to ensure consistency
-    // We sum up the minutes for the current week's dates
-    final weekDates = _getWeekDates();
-    final int weeklyMinutes = weekDates.fold<int>(0, (sum, date) {
-      return sum + _getMinutesForDate(date);
-    });
+    // Use Firestore data directly for weekly minutes (authoritative source)
+    final int weeklyMinutes = _userStats?.minutesThisWeek ?? 0;
 
     // Calculate average daily minutes (over 7 days)
     final double avgDaily = weeklyMinutes / 7.0;
 
+    // Still need weekDates for the week display and date range
+    final weekDates = _getWeekDates();
+
     final weeklySessionCount = _calendarData.entries
         .where((e) => weekDates.map(_formatDateKey).contains(e.key))
-        .fold(0, (sum, e) => sum + e.value.sessionCount);
+        .fold(0, (sum, e) => sum + e.value.ritualWindowCount);
 
     // Weekly activity setup
     final days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -672,7 +752,7 @@ class _StatsScreenState extends State<StatsScreen> {
               textBaseline: TextBaseline.alphabetic,
               children: [
                 Text(
-                  '$weeklyMinutes',
+                  _formatMinutes(weeklyMinutes),
                   style: TextStyle(
                     fontSize: 48,
                     fontWeight: FontWeight.w700,
@@ -1064,5 +1144,76 @@ class _StatsScreenState extends State<StatsScreen> {
     }
 
     return '$trendPart$dayPart';
+  }
+
+  Widget _buildWeeklyActivityHistory() {
+    // Aggregate data by week (last 12 weeks)
+    final Map<String, int> weeklyData = {};
+    final Map<String, Map<String, int>> dailyDataByWeek = {};
+
+    final now = DateTime.now();
+
+    // Generate last 12 weeks
+    for (int weekOffset = 0; weekOffset < 12; weekOffset++) {
+      final weekStart = now.subtract(
+        Duration(days: now.weekday - 1 + (weekOffset * 7)),
+      );
+      final weekKey = _getWeekKey(weekStart);
+
+      int weekTotal = 0;
+      final Map<String, int> weekDailyData = {};
+
+      // Get data for each day in the week
+      for (int i = 0; i < 7; i++) {
+        final date = weekStart.add(Duration(days: i));
+        final dateKey = _formatDateKey(date);
+
+        // Use _getMinutesForDate to ensure real-time data sync
+        // especially important for the current week
+        final minutes = _getMinutesForDate(date);
+
+        if (minutes > 0) {
+          weekTotal += minutes;
+          weekDailyData[dateKey] = minutes;
+        }
+      }
+
+      // Sync with UserStats for current week if available to ensure exact match with top card
+      if (weekOffset == 0 &&
+          _userStats != null &&
+          _userStats!.minutesThisWeek > weekTotal) {
+        // This handles cases where _weeklyCompletions might lag slightly behind userStats
+        // However, since we populate chart from daily data, we should try to rely on daily data.
+        // But if total mismatches, we trust userStats for the 'total' display usually.
+        // Let's rely on the daily sum for now as per previous "Chart Sync" fix which worked well.
+      }
+
+      // Only include weeks with activity
+      if (weekTotal > 0) {
+        weeklyData[weekKey] = weekTotal;
+        dailyDataByWeek[weekKey] = weekDailyData;
+      }
+    }
+
+    if (weeklyData.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return WeeklyActivityHistory(
+      weeklyData: weeklyData,
+      dailyDataByWeek: dailyDataByWeek,
+      limit: 1, // Show only current week as requested
+    );
+  }
+
+  String _getWeekKey(DateTime date) {
+    // Calculate ISO week number
+    final thursday = date.add(Duration(days: 3 - date.weekday));
+    final year = thursday.year;
+    final jan4 = DateTime(year, 1, 4);
+    final weekNumber = ((thursday.difference(jan4).inDays + jan4.weekday) / 7)
+        .ceil();
+
+    return '${year}-W${weekNumber.toString().padLeft(2, '0')}';
   }
 }

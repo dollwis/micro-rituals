@@ -7,8 +7,9 @@ import '../screens/audio_player_screen.dart';
 
 class RitualHistoryList extends StatelessWidget {
   final int limit;
+  final DateTime? startDate;
 
-  const RitualHistoryList({super.key, this.limit = 10});
+  const RitualHistoryList({super.key, this.limit = 10, this.startDate});
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +23,11 @@ class RitualHistoryList extends StatelessWidget {
     const Color mutedTeal = Color(0xFF7DA8A5);
 
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: firestoreService.streamCompletionHistory(uid, limit: limit),
+      stream: firestoreService.streamCompletionHistory(
+        uid,
+        limit: limit,
+        startDate: startDate,
+      ),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return Padding(
@@ -88,9 +93,18 @@ class RitualHistoryList extends StatelessWidget {
                   completion['duration_minutes'] as int? ?? 0;
               final String duration;
               if (completionSeconds != null && completionSeconds > 0) {
-                final m = completionSeconds ~/ 60;
-                final s = completionSeconds % 60;
-                duration = '${m}:${s.toString().padLeft(2, '0')}';
+                final h = completionSeconds ~/ 3600;
+                final m = (completionSeconds % 3600) ~/ 60;
+                // final s = completionSeconds % 60; // We usually don't show seconds for history if > 1m?
+
+                if (h > 0) {
+                  duration = '${h}h ${m}m';
+                } else if (m > 0) {
+                  duration = '${m}m';
+                } else {
+                  // Less than 1 minute
+                  duration = '<1m';
+                }
               } else {
                 duration = '${completionMinutes}m';
               }

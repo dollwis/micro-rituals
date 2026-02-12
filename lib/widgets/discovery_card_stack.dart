@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:just_audio/just_audio.dart';
 import 'ritual_cover_image.dart';
 import '../models/meditation.dart';
 import '../theme/app_theme.dart';
@@ -345,7 +347,7 @@ class _DraggableCardState extends State<_DraggableCard> {
   }
 }
 
-class DiscoveryCard extends StatelessWidget {
+class DiscoveryCard extends StatefulWidget {
   final Meditation meditation;
   final bool isFront;
 
@@ -354,6 +356,64 @@ class DiscoveryCard extends StatelessWidget {
     required this.meditation,
     required this.isFront,
   });
+
+  @override
+  State<DiscoveryCard> createState() => _DiscoveryCardState();
+}
+
+class _DiscoveryCardState extends State<DiscoveryCard> {
+  late final AudioPlayer _previewPlayer;
+  bool _isPlaying = false;
+  Timer? _stopTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _previewPlayer = AudioPlayer();
+  }
+
+  @override
+  void dispose() {
+    _stopPreview();
+    _previewPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _togglePreview() async {
+    if (_isPlaying) {
+      _stopPreview();
+    } else {
+      await _startPreview();
+    }
+  }
+
+  Future<void> _startPreview() async {
+    try {
+      if (widget.meditation.audioUrl.isEmpty) return;
+
+      await _previewPlayer.setUrl(widget.meditation.audioUrl);
+      await _previewPlayer.play();
+
+      if (mounted) {
+        setState(() => _isPlaying = true);
+      }
+
+      // Auto-stop after 10 seconds
+      _stopTimer = Timer(const Duration(seconds: 10), _stopPreview);
+    } catch (e) {
+      print('Preview error: $e');
+      _stopPreview();
+    }
+  }
+
+  void _stopPreview() {
+    _stopTimer?.cancel();
+    _previewPlayer.stop();
+    _previewPlayer.seek(Duration.zero);
+    if (mounted) {
+      setState(() => _isPlaying = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -376,9 +436,9 @@ class DiscoveryCard extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             // 1. Full Cover Image
-            if (meditation.coverImage.isNotEmpty)
+            if (widget.meditation.coverImage.isNotEmpty)
               RitualCoverImage(
-                imageUrl: meditation.coverImage,
+                imageUrl: widget.meditation.coverImage,
                 fit: BoxFit.cover,
                 memCacheWidth: 600,
                 memCacheHeight: 800,
@@ -424,7 +484,36 @@ class DiscoveryCard extends StatelessWidget {
               ),
             ),
 
-            // 3. Info Chips
+            // 3. Play/Pause Button (top-right)
+            if (widget.isFront)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: GestureDetector(
+                  onTap: _togglePreview,
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _isPlaying ? Icons.pause : Icons.play_arrow,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+
+            // 4. Info Chips
             Positioned(
               bottom: 20,
               left: 16,
@@ -433,7 +522,11 @@ class DiscoveryCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildInfoChip(context, meditation.title, isHighlight: true),
+                  _buildInfoChip(
+                    context,
+                    widget.meditation.title,
+                    isHighlight: true,
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -441,9 +534,12 @@ class DiscoveryCard extends StatelessWidget {
                     children: [
                       _buildInfoChip(
                         context,
-                        meditation.category.toUpperCase(),
+                        widget.meditation.category.toUpperCase(),
                       ),
-                      _buildInfoChip(context, meditation.formattedDuration),
+                      _buildInfoChip(
+                        context,
+                        widget.meditation.formattedDuration,
+                      ),
                     ],
                   ),
                 ],

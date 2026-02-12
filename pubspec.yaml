@@ -45,6 +45,7 @@ dependencies:
   just_audio_background: ^0.0.1-beta.11
   audio_session: ^0.1.18
   audio_service: ^0.18.17
+  audioplayers: ^6.0.0
 
   # Lottie animations
   lottie: ^3.3.1

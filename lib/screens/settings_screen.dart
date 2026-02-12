@@ -3,19 +3,23 @@ import 'dart:ui';
 
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
-import 'premium_plans_screen.dart';
+import 'subscription_screen.dart';
 import '../services/notification_service.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../models/firestore_user.dart';
+import '../models/notification_types.dart';
+
 import '../screens/login_screen.dart';
+import '../widgets/ritual_time_slider.dart';
 import '../providers/theme_provider.dart';
 import 'contact_support_screen.dart';
 import 'profile_settings_screen.dart';
 import 'admin_upload_screen.dart';
 import '../providers/audio_player_provider.dart';
 import 'privacy_policy_screen.dart';
-import '../services/migration_service.dart';
+import 'downloads_screen.dart';
+import '../services/offline_mode_service.dart';
 
 /// Comprehensive Settings Screen
 /// Features: Profile header, stats cards, settings menu, account actions
@@ -27,14 +31,27 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  // Import notification preferences
   final NotificationService _notificationService = NotificationService();
   final AuthService _authService = AuthService();
   final FirestoreService _firestoreService = FirestoreService();
 
   // States
   bool _notificationsEnabled = false;
+  // Granular notification states
+  bool _morningEnabled = true;
+  bool _afternoonEnabled = true;
+  bool _eveningEnabled = true;
 
-  TimeOfDay _reminderTime = const TimeOfDay(hour: 16, minute: 0);
+  // Custom notification times
+  TimeOfDay _morningTime = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _afternoonTime = const TimeOfDay(hour: 14, minute: 0);
+  TimeOfDay _eveningTime = const TimeOfDay(hour: 20, minute: 0);
+
+  bool _hasUnsavedChanges = false;
+  // _reminderTime removed
+  // _notificationTiming removed
+  bool _showRitualWindowSettings = false;
   bool _isLoading = true;
 
   FirestoreUser? _userStats;
@@ -48,7 +65,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _authService.currentUser?.email ?? 'user@dailypulse.app';
   String? get _userPhotoUrl =>
       _userStats?.photoUrl ?? _authService.currentUser?.photoURL;
-  int get _currentStreak => _userStats?.currentStreak ?? 0;
   int get _totalCompleted => _userStats?.totalCompleted ?? 0;
   String get _subscriptionPlan =>
       (_userStats?.isSubscriber ?? false) ? 'Premium' : 'Free';
@@ -72,15 +88,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final enabled = await _notificationService.areNotificationsEnabled();
-    final time = await _notificationService.getReminderTime();
+    final prefs = await _notificationService.getNotificationPreferences();
 
     setState(() {
-      _notificationsEnabled = enabled;
-      _reminderTime = time;
+      _notificationsEnabled = prefs.enabled;
 
+      _morningEnabled = prefs.morningEnabled;
+      _afternoonEnabled = prefs.afternoonEnabled;
+      _eveningEnabled = prefs.eveningEnabled;
+
+      _morningTime = prefs.morningTime;
+      _afternoonTime = prefs.afternoonTime;
+      _eveningTime = prefs.eveningTime;
+
+      // _notificationTiming removed
       _isLoading = false;
+      _hasUnsavedChanges = false;
     });
+  }
+
+  Future<void> _saveNotificationSettings() async {
+    setState(() => _isLoading = true);
+    try {
+      final current = await _notificationService.getNotificationPreferences();
+      final newPrefs = current.copyWith(
+        morningEnabled: _morningEnabled,
+        morningTime: _morningTime,
+        afternoonEnabled: _afternoonEnabled,
+        afternoonTime: _afternoonTime,
+        eveningEnabled: _eveningEnabled,
+        eveningTime: _eveningTime,
+      );
+      await _notificationService.setNotificationPreferences(newPrefs);
+
+      if (mounted) {
+        setState(() {
+          _hasUnsavedChanges = false;
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Notification settings saved'),
+            backgroundColor: AppTheme.getSageColor(context),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save settings'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _toggleNotifications(bool value) async {
@@ -137,33 +200,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
-    await _notificationService.setNotificationsEnabled(value);
-    setState(() => _notificationsEnabled = value);
-  }
-
-  Future<void> _selectTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: _reminderTime,
-      builder: (context, child) {
-        return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: AppTheme.sageGreen,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: AppTheme.darkText,
-            ),
-          ),
-          child: child!,
-        );
-      },
+    // Save new preferences
+    final currentPrefs = await _notificationService
+        .getNotificationPreferences();
+    final updatedPrefs = currentPrefs.copyWith(
+      enabled: value,
+      timing: NotificationTiming.ritualWindows, // Force ritual windows
     );
-
-    if (picked != null && picked != _reminderTime) {
-      await _notificationService.setReminderTime(picked);
-      setState(() => _reminderTime = picked);
-    }
+    await _notificationService.setNotificationPreferences(updatedPrefs);
+    setState(() => _notificationsEnabled = value);
   }
 
   @override
@@ -203,6 +248,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildDailyReminderTile(),
                   const SizedBox(height: 12),
 
+                  // Ritual Window Times
+                  _buildRitualWindowSection(),
+                  const SizedBox(height: 12),
+
+                  // Downloads
+                  _buildDownloadsTile(),
+                  const SizedBox(height: 12),
+
                   // New Theme Selector
                   _buildThemeSection(),
                   const SizedBox(height: 24),
@@ -215,7 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSectionHeader('SUPPORT'),
                   const SizedBox(height: 12),
                   _buildSupportTile(),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 12),
 
                   // Admin Section (Hidden)
                   if (_authService.currentUserId ==
@@ -224,13 +277,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 12),
                     _buildAdminTile(),
                     const SizedBox(height: 12),
-                    _buildMigrationTile(), // Added Migration Tile
+
+                    // Test Notification (Debug) - Moved to Admin
+                    _buildListItem(
+                      icon: Icons.notifications_active_outlined,
+                      title: 'Test Notification (5s delay)',
+                      onTap: () async {
+                        await _notificationService.sendTestNotification();
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Notification scheduled for 5s from now',
+                              ),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
+                      },
+                      iconColor: Colors.orange,
+                    ),
+                    const SizedBox(height: 12),
+
                     const SizedBox(height: 32),
                   ],
 
                   // 4. Account Actions
                   _buildAccountActions(),
-                  const SizedBox(height: 48),
+                  const SizedBox(height: 100),
                 ],
               ),
             ),
@@ -313,50 +387,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       fontSize: 13,
                       color: AppTheme.getMutedColor(context),
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
 
-            // Streak Badge with glow
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppTheme.orange.withValues(alpha: 0.9),
-                    AppTheme.orange,
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.orange.withValues(alpha: 0.4),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.local_fire_department,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$_currentStreak',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            // Streak Badge moved to Reflection Screen
           ],
         ),
       ),
@@ -511,9 +549,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     Text(
-                      _notificationsEnabled
-                          ? 'On at ${_reminderTime.format(context)}'
-                          : 'Off',
+                      'Enable daily notifications',
                       style: TextStyle(
                         fontSize: 13,
                         color: AppTheme.getMutedColor(context),
@@ -531,39 +567,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // Time picker (visible when enabled)
-          if (_notificationsEnabled) ...[
-            const SizedBox(height: 12),
-            GestureDetector(
-              onTap: _selectTime,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.getSageColor(context).withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.access_time,
-                      color: AppTheme.getPrimary(context),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Change Time: ${_reminderTime.format(context)}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: AppTheme.getPrimary(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+          // Time picker removed as per user request
         ],
       ),
     );
@@ -742,6 +746,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildDownloadsTile() {
+    return FutureBuilder<int>(
+      future: OfflineModeService().getDownloadedIds().then((ids) => ids.length),
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+
+        return _buildListItem(
+          icon: Icons.download_rounded,
+          title: count > 0 ? 'Offline Downloads ($count)' : 'Offline Downloads',
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const DownloadsScreen()),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildSubscriptionTile() {
     final isPremium = _subscriptionPlan == 'Premium';
 
@@ -847,7 +871,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const PremiumPlansScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const SubscriptionScreen(),
+                    fullscreenDialog: true,
+                  ),
                 );
               },
               child: Container(
@@ -929,12 +956,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required IconData icon,
     required String title,
     required VoidCallback onTap,
+    Color? iconColor,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Row(
         children: [
-          Icon(icon, color: AppTheme.getMutedColor(context), size: 22),
+          Icon(
+            icon,
+            color: iconColor ?? AppTheme.getMutedColor(context),
+            size: 22,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -1022,102 +1054,296 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildMigrationTile() {
-    return GestureDetector(
-      onTap: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Update All Meditations'),
-            content: const Text(
-              'This will extract duration for all meditations. This may take a while.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Start'),
-              ),
-            ],
-          ),
-        );
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RITUAL WINDOW SETTINGS SECTION
+  // ─────────────────────────────────────────────────────────────────────────────
 
-        if (confirmed == true && mounted) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) =>
-                const Center(child: CircularProgressIndicator()),
-          );
+  Widget _buildRitualWindowSection() {
+    // Only show if master notifications are enabled
+    if (!_notificationsEnabled) return const SizedBox.shrink();
 
-          try {
-            await MigrationService().extractDurationsForAllMeditations();
-            if (mounted) {
-              Navigator.pop(context); // Close loading
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('✅ Migration complete!')),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.getCardColor(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.getBorderColor(context)),
+      ),
+      child: Column(
+        children: [
+          // Header with expand/collapse
+          InkWell(
+            onTap: () {
+              setState(
+                () => _showRitualWindowSettings = !_showRitualWindowSettings,
               );
-            }
-          } catch (e) {
-            if (mounted) {
-              Navigator.pop(context); // Close loading
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('Error: $e')));
-            }
-          }
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppTheme.getCardColor(context),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.getBorderColor(context)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.purple.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.update, color: Colors.purple),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            },
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
                 children: [
-                  Text(
-                    'Run Migration',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.getTextColor(context),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppTheme.getSageColor(
+                        context,
+                      ).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.tune,
+                      color: AppTheme.getPrimary(context),
                     ),
                   ),
-                  Text(
-                    'Extract durations for existing items',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.getMutedColor(context),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ritual Notifications',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.getTextColor(context),
+                          ),
+                        ),
+                        Text(
+                          'Customize which rituals to be notified for',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppTheme.getMutedColor(context),
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                  Icon(
+                    _showRitualWindowSettings
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: AppTheme.getMutedColor(context),
                   ),
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: AppTheme.getMutedColor(context),
+          ),
+
+          // Expandable content
+          if (_showRitualWindowSettings) ...[
+            Divider(color: AppTheme.getBorderColor(context), height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // Morning Window
+                  _buildWindowToggle(
+                    icon: Icons.wb_sunny,
+                    iconColor: Colors.orange,
+                    label: 'Morning Ritual',
+                    subLabel: 'Window: 04:00 - 12:00',
+                    value: _morningEnabled,
+                    time: _morningTime,
+                    startTime: const TimeOfDay(hour: 4, minute: 0),
+                    endTime: const TimeOfDay(hour: 12, minute: 0),
+                    onChanged: (val) {
+                      setState(() {
+                        _morningEnabled = val;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                    onTimeChanged: (newTime) {
+                      setState(() {
+                        _morningTime = newTime;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Afternoon Window
+                  _buildWindowToggle(
+                    icon: Icons.wb_cloudy,
+                    iconColor: Colors.blue,
+                    label: 'Afternoon Reset',
+                    subLabel: 'Window: 12:00 - 18:00',
+                    value: _afternoonEnabled,
+                    time: _afternoonTime,
+                    startTime: const TimeOfDay(hour: 12, minute: 0),
+                    endTime: const TimeOfDay(hour: 18, minute: 0),
+                    onChanged: (val) {
+                      setState(() {
+                        _afternoonEnabled = val;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                    onTimeChanged: (newTime) {
+                      setState(() {
+                        _afternoonTime = newTime;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Evening Window
+                  _buildWindowToggle(
+                    icon: Icons.nights_stay,
+                    iconColor: Colors.indigo,
+                    label: 'Evening Wind-Down',
+                    subLabel: 'Window: 18:00 - 04:00',
+                    value: _eveningEnabled,
+                    time: _eveningTime,
+                    startTime: const TimeOfDay(hour: 18, minute: 0),
+                    endTime: const TimeOfDay(hour: 4, minute: 0),
+                    onChanged: (val) {
+                      setState(() {
+                        _eveningEnabled = val;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                    onTimeChanged: (newTime) {
+                      setState(() {
+                        _eveningTime = newTime;
+                        _hasUnsavedChanges = true;
+                      });
+                    },
+                  ),
+
+                  // Action Buttons
+                  if (_hasUnsavedChanges) ...[
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            // Discard changes by reloading
+                            _loadSettings();
+                          },
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: AppTheme.getMutedColor(context),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton.icon(
+                          onPressed: _isLoading
+                              ? null
+                              : _saveNotificationSettings,
+                          icon: _isLoading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.check, size: 16),
+                          label: const Text('Save Changes'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.getPrimary(context),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWindowToggle({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String subLabel,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    required TimeOfDay time,
+    required ValueChanged<TimeOfDay> onTimeChanged,
+    required TimeOfDay startTime,
+    required TimeOfDay endTime,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.getSageColor(context).withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.getBorderColor(context)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.getTextColor(context),
+                      ),
+                    ),
+                    Text(
+                      subLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.getMutedColor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: value,
+                onChanged: onChanged,
+                activeTrackColor: AppTheme.getPrimary(context),
+                thumbColor: WidgetStateProperty.all(Colors.white),
+              ),
+            ],
+          ),
+          if (value) ...[
+            const SizedBox(height: 12),
+            RitualTimeSlider(
+              startTime: startTime,
+              endTime: endTime,
+              currentTime: time,
+              onChanged: onTimeChanged,
+              isEnabled: value,
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
       ),
     );
   }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
@@ -289,6 +291,32 @@ class AppTheme {
     return dark
         ? Colors.white.withValues(alpha: 0.05)
         : lavenderLight.withValues(alpha: 0.5);
+  }
+
+  static SystemUiOverlayStyle getSystemUiOverlayStyle({
+    required ThemeVariant variant,
+    required bool isDarkMode,
+  }) {
+    Color bg;
+    if (variant == ThemeVariant.sunrise) {
+      bg = isDarkMode ? sunriseBackgroundDark : sunriseBackgroundLight;
+    } else if (variant == ThemeVariant.ocean) {
+      bg = isDarkMode ? oceanBackgroundDark : oceanBackgroundLight;
+    } else if (variant == ThemeVariant.sage) {
+      bg = isDarkMode ? sageBackgroundDark : sageBackgroundLight;
+    } else {
+      bg = isDarkMode ? backgroundDark : backgroundLight;
+    }
+
+    return SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDarkMode ? Brightness.light : Brightness.dark,
+      statusBarBrightness: isDarkMode ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: bg,
+      systemNavigationBarIconBrightness: isDarkMode
+          ? Brightness.light
+          : Brightness.dark,
+    );
   }
 
   // ════════════════════════════════════════════════════════════════════════════

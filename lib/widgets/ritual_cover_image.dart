@@ -46,6 +46,8 @@ class RitualCoverImage extends StatelessWidget {
         width: width,
         height: height,
         fit: fit,
+        cacheWidth: memCacheWidth, // Enable memory cache on web
+        cacheHeight: memCacheHeight,
         loadingBuilder: placeholder != null
             ? (context, child, loadingProgress) {
                 if (loadingProgress == null) return child;
@@ -88,7 +90,7 @@ class RitualCoverImage extends StatelessWidget {
     return Container(
       width: width,
       height: height,
-      color: Colors.grey.withOpacity(0.1),
+      color: Colors.grey.withValues(alpha: 0.1),
     );
   }
 
@@ -96,7 +98,7 @@ class RitualCoverImage extends StatelessWidget {
     return Container(
       width: width,
       height: height,
-      color: Colors.grey.withOpacity(0.1),
+      color: Colors.grey.withValues(alpha: 0.1),
       child: const Icon(Icons.error_outline),
     );
   }

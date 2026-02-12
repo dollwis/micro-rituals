@@ -56,81 +56,103 @@ class _BreathingCoverImageState extends State<BreathingCoverImage>
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: widget.size * 1.4, // Decreased from 1.5
-      height: widget.size * 1.4,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Breathing Rings
-          if (widget.isPlaying)
-            RepaintBoundary(
-              child: AnimatedBuilder(
-                animation: _pulseController,
-                builder: (context, child) {
-                  return CustomPaint(
-                    painter: _RingsPainter(
-                      progress: _pulseController.value,
-                      color: AppTheme.isDark(context)
-                          ? Colors.white
-                          : AppTheme.getPrimary(context),
-                      baseRadius: widget.size / 2,
-                    ),
-                    size: Size(widget.size * 1.4, widget.size * 1.4),
-                  );
-                },
-              ),
-            ),
+    // Check for reduced motion accessibility preference
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
 
-          // Main Image Circle
-          Container(
-            width: widget.size,
-            height: widget.size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              image: widget.imageUrl != null && widget.imageUrl!.isNotEmpty
-                  ? DecorationImage(
-                      image: ResizeImage(
-                        CachedNetworkImageProvider(widget.imageUrl!),
-                        width: (widget.size * 2.5)
-                            .toInt(), // Optimization: Decode closer to display size
-                      ),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-              gradient: widget.imageUrl == null || widget.imageUrl!.isEmpty
-                  ? LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        AppTheme.getLavenderColor(context),
-                        AppTheme.getPrimary(context).withValues(alpha: 0.2),
-                      ],
-                    )
-                  : null,
-              border: Border.all(
-                color: AppTheme.isDark(context)
-                    ? Colors.white.withValues(alpha: 0.1)
-                    : Colors.white,
-                width: 4,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.getPrimary(context).withValues(alpha: 0.3),
-                  blurRadius: 24,
-                  spreadRadius: 4,
+    // Stop animations if reduced motion is enabled
+    if (reduceMotion && widget.isPlaying && _pulseController.isAnimating) {
+      _pulseController.stop();
+    } else if (!reduceMotion &&
+        widget.isPlaying &&
+        !_pulseController.isAnimating) {
+      _pulseController.repeat(reverse: true);
+    }
+
+    return Semantics(
+      label: widget.imageUrl != null && widget.imageUrl!.isNotEmpty
+          ? 'Audio cover art'
+          : 'Default meditation icon',
+      image: true,
+      child: SizedBox(
+        width: widget.size * 1.4, // Decreased from 1.5
+        height: widget.size * 1.4,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Breathing Rings - decorative only, excluded from accessibility
+            if (widget.isPlaying && !reduceMotion)
+              ExcludeSemantics(
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        painter: _RingsPainter(
+                          progress: _pulseController.value,
+                          color: AppTheme.isDark(context)
+                              ? Colors.white
+                              : AppTheme.getPrimary(context),
+                          baseRadius: widget.size / 2,
+                        ),
+                        size: Size(widget.size * 1.4, widget.size * 1.4),
+                      );
+                    },
+                  ),
                 ),
-              ],
+              ),
+
+            // Main Image Circle
+            Container(
+              width: widget.size,
+              height: widget.size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                image: widget.imageUrl != null && widget.imageUrl!.isNotEmpty
+                    ? DecorationImage(
+                        image: ResizeImage(
+                          CachedNetworkImageProvider(widget.imageUrl!),
+                          width: (widget.size * 2.5)
+                              .toInt(), // Optimization: Decode closer to display size
+                        ),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                gradient: widget.imageUrl == null || widget.imageUrl!.isEmpty
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          AppTheme.getLavenderColor(context),
+                          AppTheme.getPrimary(context).withValues(alpha: 0.2),
+                        ],
+                      )
+                    : null,
+                border: Border.all(
+                  color: AppTheme.isDark(context)
+                      ? Colors.white.withValues(alpha: 0.1)
+                      : Colors.white,
+                  width: 4,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.getPrimary(context).withValues(alpha: 0.3),
+                    blurRadius: 24,
+                    spreadRadius: 4,
+                  ),
+                ],
+              ),
+              child: widget.imageUrl == null || widget.imageUrl!.isEmpty
+                  ? Icon(
+                      Icons.spa,
+                      size: widget.size * 0.4,
+                      color: AppTheme.getPrimary(
+                        context,
+                      ).withValues(alpha: 0.8),
+                    )
+                  : null,
             ),
-            child: widget.imageUrl == null || widget.imageUrl!.isEmpty
-                ? Icon(
-                    Icons.spa,
-                    size: widget.size * 0.4,
-                    color: AppTheme.getPrimary(context).withValues(alpha: 0.8),
-                  )
-                : null,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -158,12 +180,17 @@ class _RingsPainter extends CustomPainter {
 
     for (int i = 1; i <= 3; i++) {
       final ringOffset = 10.0 * i; // Much tighter (was 20)
-      final breathExpansion = 8.0 * progress * i; // Reduced breath (was 15)
+
+      // Smoother easing for breath expansion using cubic curve
+      final easedProgress = Curves.easeInOutCubic.transform(progress);
+      final breathExpansion =
+          8.0 * easedProgress * i; // Reduced breath (was 15)
 
       final radius = baseRadius + ringOffset + breathExpansion;
 
-      // Opacity Logic
-      final opacity = (0.2 + (0.5 * progress)).clamp(0.0, 0.8);
+      // Smoother opacity transition with easing
+      final easedOpacity = Curves.easeInOut.transform(progress);
+      final opacity = (0.2 + (0.5 * easedOpacity)).clamp(0.0, 0.8);
 
       _paint.color = color.withValues(alpha: opacity);
 

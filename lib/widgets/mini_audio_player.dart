@@ -53,140 +53,173 @@ class _MiniPlayerContent extends StatelessWidget {
           ),
         );
       },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? AppTheme.getBackground(context).withValues(alpha: 0.9)
-                      : AppTheme.getCardColor(context).withValues(alpha: 0.95),
-                  border: Border(
-                    top: BorderSide(color: AppTheme.getBorderColor(context)),
+      child: Semantics(
+        label: 'Mini audio player. Now playing: ${meditation.title}',
+        button: true,
+        hint: 'Double tap to open full audio player',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? AppTheme.getBackground(context).withValues(alpha: 0.9)
+                        : AppTheme.getCardColor(
+                            context,
+                          ).withValues(alpha: 0.95),
+                    border: Border(
+                      top: BorderSide(color: AppTheme.getBorderColor(context)),
+                    ),
                   ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      height: 64,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          // Cover Image
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              image: meditation.coverImage.isNotEmpty
-                                  ? DecorationImage(
-                                      image: ResizeImage(
-                                        kIsWeb
-                                            ? NetworkImage(
-                                                meditation.coverImage,
-                                              )
-                                            : CachedNetworkImageProvider(
-                                                    meditation.coverImage,
-                                                  )
-                                                  as ImageProvider,
-                                        width: 120, // Optimization
-                                        height: 120,
-                                      ),
-                                      fit: BoxFit.cover,
-                                    )
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        height: 64,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            // Cover Image
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                image: meditation.coverImage.isNotEmpty
+                                    ? DecorationImage(
+                                        image: ResizeImage(
+                                          kIsWeb
+                                              ? NetworkImage(
+                                                  meditation.coverImage,
+                                                )
+                                              : CachedNetworkImageProvider(
+                                                      meditation.coverImage,
+                                                    )
+                                                    as ImageProvider,
+                                          width: 120, // Optimization
+                                          height: 120,
+                                        ),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
+                                color: primaryColor.withValues(alpha: 0.1),
+                              ),
+                              child: meditation.coverImage.isEmpty
+                                  ? Icon(Icons.music_note, color: primaryColor)
                                   : null,
-                              color: primaryColor.withValues(alpha: 0.1),
                             ),
-                            child: meditation.coverImage.isEmpty
-                                ? Icon(Icons.music_note, color: primaryColor)
-                                : null,
-                          ),
-                          const SizedBox(width: 12),
+                            const SizedBox(width: 12),
 
-                          // Title
-                          Expanded(
-                            child: Text(
-                              meditation.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: textColor,
+                            // Title
+                            Expanded(
+                              child: Text(
+                                meditation.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: textColor,
+                                ),
                               ),
                             ),
-                          ),
 
-                          // Controls
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Rewind 10s
-                              IconButton(
-                                icon: const Icon(Icons.replay_10),
-                                onPressed: player.rewind10,
-                                color: primaryColor,
-                                iconSize: 24,
-                              ),
-                              // Play/Pause - Uses ValueListenableBuilder
-                              ValueListenableBuilder<bool>(
-                                valueListenable: player.isPlayingNotifier,
-                                builder: (context, isPlaying, child) {
-                                  return IconButton(
-                                    icon: Icon(
-                                      isPlaying
-                                          ? Icons.pause_circle_filled
-                                          : Icons.play_circle_filled,
-                                    ),
-                                    onPressed: player.togglePlayPause,
-                                    color: primaryColor,
-                                    iconSize: 40,
-                                  );
-                                },
-                              ),
-                              // Forward 10s
-                              IconButton(
-                                icon: const Icon(Icons.forward_10),
-                                onPressed: player.forward10,
-                                color: primaryColor,
-                                iconSize: 24,
-                              ),
-                            ],
-                          ),
-                        ],
+                            // Controls
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Previous Track
+                                ValueListenableBuilder<Duration>(
+                                  valueListenable: player.positionNotifier,
+                                  builder: (context, position, child) {
+                                    final canSkipPrevious =
+                                        player.hasPrevious ||
+                                        position.inSeconds > 3;
+                                    return Semantics(
+                                      label: 'Previous track',
+                                      button: true,
+                                      enabled: canSkipPrevious,
+                                      hint: canSkipPrevious
+                                          ? 'Double tap to skip to previous track'
+                                          : 'Previous track not available',
+                                      child: IconButton(
+                                        icon: const Icon(
+                                          Icons.skip_previous_rounded,
+                                        ),
+                                        onPressed: canSkipPrevious
+                                            ? player.skipPrevious
+                                            : null,
+                                        color: canSkipPrevious
+                                            ? primaryColor
+                                            : primaryColor.withValues(
+                                                alpha: 0.3,
+                                              ),
+                                        iconSize: 32,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                // Play/Pause - Uses ValueListenableBuilder
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: player.isPlayingNotifier,
+                                  builder: (context, isPlaying, child) {
+                                    return Semantics(
+                                      label: isPlaying ? 'Pause' : 'Play',
+                                      button: true,
+                                      hint: isPlaying
+                                          ? 'Double tap to pause'
+                                          : 'Double tap to play',
+                                      child: IconButton(
+                                        icon: Icon(
+                                          isPlaying
+                                              ? Icons.pause_circle_filled
+                                              : Icons.play_circle_filled,
+                                        ),
+                                        onPressed: player.togglePlayPause,
+                                        color: primaryColor,
+                                        iconSize: 40,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                // Next Track
+                                Semantics(
+                                  label: 'Next track',
+                                  button: true,
+                                  enabled:
+                                      player.hasNext || player.isShuffleMode,
+                                  hint: player.hasNext || player.isShuffleMode
+                                      ? 'Double tap to skip to next track'
+                                      : 'Next track not available',
+                                  child: IconButton(
+                                    icon: const Icon(Icons.skip_next_rounded),
+                                    onPressed:
+                                        player.hasNext || player.isShuffleMode
+                                        ? player.skipNext
+                                        : null,
+                                    color:
+                                        player.hasNext || player.isShuffleMode
+                                        ? primaryColor
+                                        : primaryColor.withValues(alpha: 0.3),
+                                    iconSize: 32,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    // Progress Bar - Uses ValueListenableBuilder
-                    ValueListenableBuilder<Duration>(
-                      valueListenable: player.positionNotifier,
-                      builder: (context, position, child) {
-                        double progress = 0.0;
-                        if (player.duration.inMilliseconds > 0) {
-                          progress =
-                              position.inMilliseconds /
-                              player.duration.inMilliseconds;
-                          progress = progress.clamp(0.0, 1.0);
-                        }
-                        return LinearProgressIndicator(
-                          value: progress,
-                          backgroundColor: primaryColor.withValues(alpha: 0.1),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            primaryColor,
-                          ),
-                          minHeight: 2,
-                        );
-                      },
-                    ),
-                  ],
+                      // Progress Bar removed for Zen Mode
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

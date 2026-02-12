@@ -21,20 +21,30 @@ class ThemeProvider extends ChangeNotifier {
   ThemeVariant _currentVariant = ThemeVariant.lavender;
   ThemeVariant get currentVariant => _currentVariant;
 
+  bool _isInitialized = false;
+  bool get isInitialized => _isInitialized;
+
   ThemeProvider();
 
   Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    _isDarkMode = prefs.getBool(_keyZenMode) ?? false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _isDarkMode = prefs.getBool(_keyZenMode) ?? false;
 
-    final variantString = prefs.getString(_keyVariant);
-    if (variantString != null) {
-      _currentVariant = ThemeVariant.values.firstWhere(
-        (e) => e.toString() == variantString,
-        orElse: () => ThemeVariant.lavender,
-      );
+      final variantString = prefs.getString(_keyVariant);
+      if (variantString != null) {
+        _currentVariant = ThemeVariant.values.firstWhere(
+          (e) => e.toString() == variantString,
+          orElse: () => ThemeVariant.lavender,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error loading theme preferences: $e');
+      // Fallback to defaults (already set)
+    } finally {
+      _isInitialized = true;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> toggleTheme(bool value) async {

@@ -286,6 +286,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                           ? CachedNetworkImage(
                               imageUrl: _userStats!.photoUrl!,
                               fit: BoxFit.cover,
+                              memCacheWidth:
+                                  300, // Optimization: limit memory usage
+                              memCacheHeight: 300,
                               fadeInDuration: Duration.zero,
                               placeholder: (ctx, url) => Container(
                                 color: AppTheme.sageGreen,

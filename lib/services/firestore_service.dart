@@ -4,23 +4,26 @@ import '../models/meditation.dart';
 import '../models/firestore_user.dart';
 import 'local_user_service.dart';
 
-/// Activity data for a single day (used in mini calendar)
 class ActivityData {
   final int totalMinutes;
   final int sessionCount;
+  final int ritualWindowCount; // Count of 'ritual_window' sessions
   final List<String> ritualNames;
 
   const ActivityData({
     required this.totalMinutes,
     required this.sessionCount,
+    this.ritualWindowCount = 0,
     required this.ritualNames,
   });
 
   /// Add another completion to this day's data
-  ActivityData addCompletion(int minutes, String ritualName) {
+  ActivityData addCompletion(int minutes, String ritualName, {String? source}) {
     return ActivityData(
       totalMinutes: totalMinutes + minutes,
       sessionCount: sessionCount + 1,
+      ritualWindowCount:
+          ritualWindowCount + (source == 'ritual_window' ? 1 : 0),
       ritualNames: [...ritualNames, ritualName],
     );
   }
@@ -155,6 +158,7 @@ class FirestoreService {
     int? seconds,
     String ritualName = 'Ritual',
     String? coverImageUrl,
+    String? source, // 'ritual_window', 'library', etc.
   }) async {
     if (minutes <= 0 && (seconds == null || seconds <= 0)) return;
     await getOrCreateUser(uid); // Ensure exists
@@ -196,6 +200,7 @@ class FirestoreService {
           'completed_at_iso': now.toIso8601String(), // Use ISO for local
           'completed_at': now.millisecondsSinceEpoch, // For compatibility
           if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
+          if (source != null) 'source': source,
         });
       } else {
         // Add new
@@ -206,6 +211,7 @@ class FirestoreService {
           'completed_at_iso': now.toIso8601String(),
           'completed_at': now.millisecondsSinceEpoch,
           if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
+          if (source != null) 'source': source,
         });
       }
 
@@ -241,6 +247,7 @@ class FirestoreService {
         if (seconds != null) 'duration_seconds': FieldValue.increment(seconds),
         'completed_at': Timestamp.fromDate(now),
         if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
+        if (source != null) 'source': source,
       });
     } else {
       // Create new entry
@@ -250,6 +257,7 @@ class FirestoreService {
         if (seconds != null) 'duration_seconds': seconds,
         'completed_at': Timestamp.fromDate(now),
         if (coverImageUrl != null) 'cover_image_url': coverImageUrl,
+        if (source != null) 'source': source,
       });
     }
   }
@@ -348,6 +356,7 @@ class FirestoreService {
     String ritualName = 'Ritual',
     String? coverImageUrl,
     bool updateStats = true,
+    String? source,
   }) async {
     // Use new granular methods
     final minutes = (ritualDurationSeconds / 60).ceil();
@@ -360,6 +369,7 @@ class FirestoreService {
         seconds: ritualDurationSeconds,
         ritualName: ritualName,
         coverImageUrl: coverImageUrl,
+        source: source,
       );
     }
 
@@ -371,17 +381,22 @@ class FirestoreService {
   Stream<List<Map<String, dynamic>>> streamCompletionHistory(
     String uid, {
     int limit = 10,
+    DateTime? startDate,
   }) {
     if (_isGuest) {
       return _localUserService.historyStream.map((list) {
-        // Transform local history if needed
-        // We might need to handle Timestamp vs milliseconds conversion for the UI
-        // UI expects 'completed_at' as Timestamp or similar?
-        // Actually, most UI code uses `(data['completed_at'] as Timestamp).toDate()`
-        // We need to match that expectation or fix UI.
-        // Since UI uses `as Timestamp`, we should mock it or fix UI.
-        // Fixing UI is better, but mocking is faster for now.
-        return list
+        var filteredList = list;
+        if (startDate != null) {
+          filteredList = list.where((e) {
+            final date = DateTime.parse(
+              e['completed_at_iso'] ??
+                  DateTime.fromMillisecondsSinceEpoch(0).toIso8601String(),
+            );
+            return date.isAfter(startDate) || date.isAtSameMomentAs(startDate);
+          }).toList();
+        }
+
+        return filteredList
             .map((e) {
               final entry = Map<String, dynamic>.from(e);
               // Convert int to Timestamp for UI compatibility
@@ -397,10 +412,19 @@ class FirestoreService {
       });
     }
 
-    return _usersCollection
+    Query<Map<String, dynamic>> query = _usersCollection
         .doc(uid)
         .collection('completions')
-        .orderBy('completed_at', descending: true)
+        .orderBy('completed_at', descending: true);
+
+    if (startDate != null) {
+      query = query.where(
+        'completed_at',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
+      );
+    }
+
+    return query
         .limit(limit)
         .snapshots()
         .map(
@@ -609,6 +633,60 @@ class FirestoreService {
 
   // ============ WEEKLY ACTIVITY ============
 
+  /// Stream completions for the past N days (Real-time)
+  Stream<Map<String, int>> streamCompletionsForDays(
+    String uid, {
+    int daysBack = 7,
+  }) {
+    final now = DateTime.now();
+    final startDate = DateTime(now.year, now.month, now.day - daysBack + 1);
+
+    if (_isGuest) {
+      // For guest, we wrap the local stream and filter
+      return _localUserService.historyStream.map((history) {
+        final docsData = history.where((e) {
+          final date = DateTime.parse(
+            e['completed_at_iso'] ??
+                DateTime.fromMillisecondsSinceEpoch(0).toIso8601String(),
+          );
+          return date.isAfter(startDate) || date.isAtSameMomentAs(startDate);
+        }).toList();
+
+        final Map<String, int> dailyMinutes = {};
+        for (final data in docsData) {
+          final completedAt = DateTime.parse(data['completed_at_iso']);
+          final dateKey =
+              '${completedAt.year}-${completedAt.month.toString().padLeft(2, '0')}-${completedAt.day.toString().padLeft(2, '0')}';
+          final minutes = data['duration_minutes'] as int? ?? 0;
+          dailyMinutes[dateKey] = (dailyMinutes[dateKey] ?? 0) + minutes;
+        }
+        return dailyMinutes;
+      });
+    }
+
+    return _usersCollection
+        .doc(uid)
+        .collection('completions')
+        .where(
+          'completed_at',
+          isGreaterThanOrEqualTo: Timestamp.fromDate(startDate),
+        )
+        .snapshots()
+        .map((snapshot) {
+          final docsData = snapshot.docs.map((d) => d.data()).toList();
+          final Map<String, int> dailyMinutes = {};
+
+          for (final data in docsData) {
+            final completedAt = (data['completed_at'] as Timestamp).toDate();
+            final dateKey =
+                '${completedAt.year}-${completedAt.month.toString().padLeft(2, '0')}-${completedAt.day.toString().padLeft(2, '0')}';
+            final minutes = data['duration_minutes'] as int? ?? 0;
+            dailyMinutes[dateKey] = (dailyMinutes[dateKey] ?? 0) + minutes;
+          }
+          return dailyMinutes;
+        });
+  }
+
   /// Get completions for the past N days
   /// Returns a Map where key is date string (YYYY-MM-DD) and value is total minutes
   Future<Map<String, int>> getCompletionsForDays(
@@ -708,16 +786,19 @@ class FirestoreService {
           '${completedAt.year}-${completedAt.month.toString().padLeft(2, '0')}-${completedAt.day.toString().padLeft(2, '0')}';
       final minutes = data['duration_minutes'] as int? ?? 0;
       final ritualName = data['ritual_name'] as String? ?? 'Ritual';
+      final source = data['source'] as String?;
 
       if (activityData.containsKey(dateKey)) {
         activityData[dateKey] = activityData[dateKey]!.addCompletion(
           minutes,
           ritualName,
+          source: source,
         );
       } else {
         activityData[dateKey] = ActivityData(
           totalMinutes: minutes,
           sessionCount: 1,
+          ritualWindowCount: source == 'ritual_window' ? 1 : 0,
           ritualNames: [ritualName],
         );
       }

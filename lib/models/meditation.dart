@@ -52,15 +52,7 @@ class Meditation {
   }
 
   /// Available categories
-  static const List<String> categories = [
-    'Sleep',
-    'Focus',
-    'Anxiety',
-    'Stress',
-    'Morning',
-    'Evening',
-    'Breathing',
-  ];
+  static const List<String> categories = ['Focus', 'Relax', 'Sleep', 'Nature'];
 
   /// Create a copy with updated fields
   Meditation copyWith({

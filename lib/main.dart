@@ -6,48 +6,60 @@ import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
 import 'providers/audio_player_provider.dart';
+import 'providers/preview_audio_provider.dart';
+import 'providers/user_stats_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'services/app_initialization_service.dart';
 import 'widgets/loading_screen.dart';
 
 import 'dart:async';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
 Future<void> main() async {
-  //   await JustAudioBackground.init(
-  //     androidNotificationChannelId: 'com.ryanheise.bg_demo.channel.audio',
-  //     androidNotificationChannelName: 'Audio playback',
-  //     androidNotificationOngoing: true,
-  //   );
-
   runZonedGuarded(
-    () {
+    () async {
       WidgetsFlutterBinding.ensureInitialized();
 
-      // Set system UI overlay style for a clean look immediately
-      SystemChrome.setSystemUIOverlayStyle(
-        const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.dark,
-          systemNavigationBarColor: AppTheme.backgroundLight,
-          systemNavigationBarIconBrightness: Brightness.dark,
-        ),
+      // Lock orientation to portrait mode
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+
+      // Initialize Firebase
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
       );
+
+      // Initialize background audio for meditation/ritual sounds
+      await JustAudioBackground.init(
+        androidNotificationChannelId: 'com.dollwis.micro_rituals.audio',
+        androidNotificationChannelName: 'Ritual Audio',
+        androidNotificationOngoing: true,
+      );
+
+      // Set system UI overlay style for a clean look immediately
+      // This will be updated dynamically by the ThemeProvider in build()
 
       runApp(const DailyMicroRitualsApp());
     },
     (error, stack) {
-      if (error.toString().contains('Future already completed')) {
-        // Known issue with google_sign_in_web
-        debugPrint(
-          'Warning: Ignored "Future already completed" error from Google Sign-In.',
-        );
-      } else {
-        debugPrint('Uncaught error: $error');
-        debugPrintStack(stackTrace: stack);
-      }
+      _handleError(error, stack);
     },
   );
+}
+
+void _handleError(Object error, StackTrace stack) {
+  if (error.toString().contains('Future already completed')) {
+    debugPrint(
+      'Warning: Ignored "Future already completed" error from Google Sign-In.',
+    );
+  } else {
+    debugPrint('Uncaught error: $error');
+    debugPrintStack(stackTrace: stack);
+  }
 }
 
 /// Daily MicroRituals - Calm Technology Wellness Tracker
@@ -60,45 +72,35 @@ class DailyMicroRitualsApp extends StatefulWidget {
 }
 
 class _DailyMicroRitualsAppState extends State<DailyMicroRitualsApp> {
-  final ThemeProvider _themeProvider = ThemeProvider();
-  bool _themeLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTheme();
-  }
-
-  Future<void> _loadTheme() async {
-    await _themeProvider.load();
-    if (mounted) {
-      setState(() => _themeLoaded = true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _themeProvider.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (!_themeLoaded) {
-      // Show loading screen while theme is initializing
-      return const MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: LoadingScreen(),
-      );
-    }
-
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider.value(value: _themeProvider),
-        ChangeNotifierProvider(create: (_) => AudioPlayerProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()..load()),
+        ChangeNotifierProvider(create: (_) => PreviewAudioProvider()),
+        ChangeNotifierProxyProvider<PreviewAudioProvider, AudioPlayerProvider>(
+          create: (_) => AudioPlayerProvider(),
+          update: (_, preview, audio) => audio!..setPreviewProvider(preview),
+        ),
+        ChangeNotifierProvider(create: (_) => UserStatsProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
+          if (!themeProvider.isInitialized) {
+            return const MaterialApp(
+              debugShowCheckedModeBanner: false,
+              home: LoadingScreen(),
+            );
+          }
+
+          // Apply dynamic system UI overlay style
+          SystemChrome.setSystemUIOverlayStyle(
+            AppTheme.getSystemUiOverlayStyle(
+              variant: themeProvider.currentVariant,
+              isDarkMode: themeProvider.isDarkMode,
+            ),
+          );
+
           return MaterialApp(
             title: 'Daily Pulse',
             debugShowCheckedModeBanner: false,

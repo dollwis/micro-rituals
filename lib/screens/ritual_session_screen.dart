@@ -7,11 +7,8 @@ import '../widgets/ritual_button.dart';
 /// Displays the ritual button as the main focus element
 class RitualSessionScreen extends StatelessWidget {
   final FirestoreRitual ritual;
-  
-  const RitualSessionScreen({
-    super.key,
-    required this.ritual,
-  });
+
+  const RitualSessionScreen({super.key, required this.ritual});
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +54,7 @@ class RitualSessionScreen extends StatelessWidget {
                 ],
               ),
             ),
-            
+
             // Ritual info
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -90,14 +87,12 @@ class RitualSessionScreen extends StatelessWidget {
                 ],
               ),
             ),
-            
+
             // Center button
             Expanded(
-              child: Center(
-                child: RitualButton(ritual: ritual),
-              ),
+              child: Center(child: RitualButton(ritual: ritual)),
             ),
-            
+
             // Instructions hint
             Padding(
               padding: const EdgeInsets.all(24),
@@ -117,8 +112,8 @@ class RitualSessionScreen extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        ritual.instructions.isNotEmpty 
-                            ? ritual.instructions.first 
+                        ritual.instructions.isNotEmpty
+                            ? ritual.instructions.first
                             : 'Tap Start to begin your ritual',
                         style: TextStyle(
                           fontSize: 13,

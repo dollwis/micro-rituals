@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../widgets/ritual_cover_image.dart';
 import '../models/meditation.dart';
+import '../models/firestore_user.dart';
 import '../services/content_access_service.dart';
 import '../services/rewarded_ad_service.dart';
+import '../providers/user_stats_provider.dart';
 import '../services/firestore_service.dart';
 import '../services/auth_service.dart';
-import '../models/firestore_user.dart';
 import 'audio_player_screen.dart';
 import 'package:provider/provider.dart';
-import '../providers/audio_player_provider.dart';
+import '../providers/user_stats_provider.dart';
+import 'subscription_screen.dart';
+import '../widgets/category_filter_chips.dart';
+import '../widgets/meditation_card.dart';
 
 /// Zen Vault Screen - Meditation Library
 /// Displays meditation cards with subscription gating
@@ -21,13 +24,17 @@ class ZenVaultScreen extends StatefulWidget {
 }
 
 class _ZenVaultScreenState extends State<ZenVaultScreen> {
-  // Mock subscription status (would come from Firebase in production)
-  final bool _isSubscriber = false;
-  String _selectedCategory = 'All';
+  // User stats for subscription check
+  FirestoreUser? _userStats;
+
+  // Computed property for subscription status
+  bool get _isSubscriber => _userStats?.hasActiveSubscription ?? false;
+
+  final ValueNotifier<String> _selectedCategory = ValueNotifier('All');
 
   // Rewarded ad service
   final RewardedAdService _adService = RewardedAdService();
-  bool _isLoadingAd = false;
+  final ValueNotifier<bool> _isLoadingAd = ValueNotifier(false);
 
   // Search State
   bool _isSearching = false;
@@ -44,6 +51,8 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _isLoadingAd.dispose();
+    _selectedCategory.dispose();
     super.dispose();
   }
 
@@ -70,11 +79,12 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
   }
 
   void _showPaywall() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _buildPaywallSheet(),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SubscriptionScreen(),
+        fullscreenDialog: true,
+      ),
     );
   }
 
@@ -92,13 +102,14 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
   ) async {
     Navigator.pop(context); // Close the prompt
 
-    setState(() => _isLoadingAd = true);
+    // ✅ No setState - only update ValueNotifier
+    _isLoadingAd.value = true;
 
     await _adService.showRewardedAd(
       onRewardGranted: () async {
         await ContentAccessService.unlockViaReward(meditation.id);
         if (mounted) {
-          setState(() => _isLoadingAd = false);
+          _isLoadingAd.value = false;
           // Show success and open the session
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -110,11 +121,11 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
         }
       },
       onAdDismissed: () {
-        if (mounted) setState(() => _isLoadingAd = false);
+        if (mounted) _isLoadingAd.value = false;
       },
       onAdFailed: (error) {
         if (mounted) {
-          setState(() => _isLoadingAd = false);
+          _isLoadingAd.value = false;
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(SnackBar(content: Text('Ad failed: $error')));
@@ -229,123 +240,132 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final uid = AuthService().currentUserId;
-
     return Stack(
       children: [
-        StreamBuilder<FirestoreUser?>(
-          stream: uid != null
-              ? FirestoreService().streamUserStats(uid)
-              : Stream.value(null),
-          builder: (context, userSnapshot) {
-            final user = userSnapshot.data;
+        Consumer<UserStatsProvider>(
+          builder: (context, userStatsProvider, child) {
+            final user = userStatsProvider.userStats;
+            _userStats = user; // Assign for subscription checks
             final favoriteIds = user?.favoriteIds ?? [];
 
-            return StreamBuilder<List<Meditation>>(
-              stream: FirestoreService().streamMeditations(),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                }
+            return ValueListenableBuilder<String>(
+              valueListenable: _selectedCategory,
+              builder: (context, selectedCategory, child) {
+                return StreamBuilder<List<Meditation>>(
+                  stream: FirestoreService().streamMeditations(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(child: Text('Error: ${snapshot.error}'));
+                    }
 
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-                final meditations = snapshot.data!;
-                List<Meditation> filteredMeditations;
+                    final meditations = snapshot.data!;
+                    List<Meditation> filteredMeditations;
 
-                // 1. Filter by Category
-                if (_selectedCategory == 'All') {
-                  filteredMeditations = meditations;
-                } else if (_selectedCategory == 'Favorites') {
-                  filteredMeditations = meditations
-                      .where((m) => favoriteIds.contains(m.id))
-                      .toList();
-                } else if (_selectedCategory == 'Saved') {
-                  final listenLaterIds = user?.listenLaterIds ?? [];
-                  filteredMeditations = meditations
-                      .where((m) => listenLaterIds.contains(m.id))
-                      .toList();
-                } else {
-                  filteredMeditations = meditations
-                      .where((m) => m.category == _selectedCategory)
-                      .toList();
-                }
+                    // 1. Filter by Category
+                    if (selectedCategory == 'All') {
+                      filteredMeditations = meditations;
+                    } else if (selectedCategory == 'Favorites') {
+                      filteredMeditations = meditations
+                          .where((m) => favoriteIds.contains(m.id))
+                          .toList();
+                    } else if (selectedCategory == 'Saved') {
+                      final listenLaterIds = user?.listenLaterIds ?? [];
+                      filteredMeditations = meditations
+                          .where((m) => listenLaterIds.contains(m.id))
+                          .toList();
+                    } else {
+                      filteredMeditations = meditations
+                          .where(
+                            (m) =>
+                                m.category.toLowerCase() ==
+                                selectedCategory.toLowerCase(),
+                          )
+                          .toList();
+                    }
 
-                // 2. Filter by Search Query
-                if (_searchQuery.isNotEmpty) {
-                  filteredMeditations = filteredMeditations
-                      .where(
-                        (m) => m.title.toLowerCase().contains(
-                          _searchQuery.toLowerCase(),
-                        ),
-                      )
-                      .toList();
-                }
+                    // 2. Filter by Search Query
+                    if (_searchQuery.isNotEmpty) {
+                      filteredMeditations = filteredMeditations
+                          .where(
+                            (m) => m.title.toLowerCase().contains(
+                              _searchQuery.toLowerCase(),
+                            ),
+                          )
+                          .toList();
+                    }
 
-                return SafeArea(
-                  bottom: false,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 100),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Header (Searchable)
-                        _buildHeader(),
-                        const SizedBox(height: 24),
+                    return SafeArea(
+                      bottom: false,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 16, 24, 100),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header (Searchable)
+                            _buildHeader(),
+                            const SizedBox(height: 24),
 
-                        // Category Chips
-                        _buildCategoryFilter(),
-                        const SizedBox(height: 24),
+                            // Category Chips
+                            _buildCategoryFilter(),
+                            const SizedBox(height: 24),
 
-                        // Empty State
-                        if (filteredMeditations.isEmpty)
-                          Center(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 32),
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    Icons.search_off,
-                                    size: 48,
-                                    color: AppTheme.getMutedColor(context),
+                            // Empty State
+                            if (filteredMeditations.isEmpty)
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 32,
                                   ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    _selectedCategory == 'Saved'
-                                        ? 'No saved rituals yet'
-                                        : 'No meditations found',
-                                    style: TextStyle(
-                                      color: AppTheme.getMutedColor(context),
-                                    ),
+                                  child: Column(
+                                    children: [
+                                      Icon(
+                                        Icons.search_off,
+                                        size: 48,
+                                        color: AppTheme.getMutedColor(context),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        selectedCategory == 'Saved'
+                                            ? 'No saved rituals yet'
+                                            : 'No meditations found',
+                                        style: TextStyle(
+                                          color: AppTheme.getMutedColor(
+                                            context,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
+                                ),
+                              ),
+
+                            // Meditation Cards
+                            ...filteredMeditations.map(
+                              (m) => Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: _buildMeditationCard(
+                                  m,
+                                  favoriteIds.contains(m.id),
+                                  user?.listenLaterIds.contains(m.id) ?? false,
+                                  filteredMeditations,
+                                ),
                               ),
                             ),
-                          ),
-
-                        // Meditation Cards
-                        ...filteredMeditations.map(
-                          (m) => Padding(
-                            padding: const EdgeInsets.only(bottom: 16),
-                            child: _buildMeditationCard(
-                              m,
-                              favoriteIds.contains(m.id),
-                              user?.listenLaterIds.contains(m.id) ?? false,
-                              filteredMeditations,
-                            ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 );
               },
             );
           },
         ),
-        if (_isLoadingAd)
+        if (_isLoadingAd.value)
           Container(
             color: Colors.black54,
             child: const Center(child: CircularProgressIndicator()),
@@ -398,7 +418,7 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Guided meditations for every moment',
+                      'Explore your mind with peaceful meditations',
                       style: TextStyle(
                         fontSize: 14,
                         color: AppTheme.getMutedColor(context),
@@ -431,49 +451,36 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
   Widget _buildCategoryFilter() {
     final categories = ['All', 'Saved', 'Favorites', ...Meditation.categories];
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: categories.map((category) {
-          final isSelected = _selectedCategory == category;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: GestureDetector(
-              onTap: () => setState(() => _selectedCategory = category),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? AppTheme.getPrimary(context)
-                      : AppTheme.getCardColor(context),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected
-                        ? AppTheme.getPrimary(context)
-                        : AppTheme.getBorderColor(context),
-                  ),
-                ),
-                child: Text(
-                  category,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isSelected
-                        ? (AppTheme.isDark(context)
-                              ? AppTheme.whiteText
-                              : AppTheme.darkText)
-                        : AppTheme.getMutedColor(context),
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
+    return ValueListenableBuilder<String>(
+      valueListenable: _selectedCategory,
+      builder: (context, selectedCategory, child) {
+        return CategoryFilterChips(
+          selectedCategory: selectedCategory,
+          categories: categories,
+          onCategorySelected: (category) {
+            _selectedCategory.value = category;
+          },
+        );
+      },
     );
+  }
+
+  void _toggleFavorite(String meditationId) {
+    final uid = AuthService().currentUserId;
+    if (uid != null) {
+      final userStats = context.read<UserStatsProvider>().userStats;
+      final isFavorite = userStats?.favoriteIds.contains(meditationId) ?? false;
+      FirestoreService().toggleFavorite(uid, meditationId, !isFavorite);
+    }
+  }
+
+  void _toggleSave(String meditationId) {
+    final uid = AuthService().currentUserId;
+    if (uid != null) {
+      final userStats = context.read<UserStatsProvider>().userStats;
+      final isSaved = userStats?.listenLaterIds.contains(meditationId) ?? false;
+      FirestoreService().toggleListenLater(uid, meditationId, !isSaved);
+    }
   }
 
   Widget _buildMeditationCard(
@@ -483,7 +490,6 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
     List<Meditation> playlist,
   ) {
     final isEvergreen = ContentAccessService.isEvergreen(meditation.id);
-    final isSavedView = _selectedCategory == 'Saved';
 
     return FutureBuilder<AccessResult>(
       future: ContentAccessService.canAccess(
@@ -494,7 +500,6 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
       ),
       builder: (context, snapshot) {
         final accessResult = snapshot.data;
-        final canAccess = accessResult?.canAccess ?? isEvergreen;
         final accessType =
             accessResult?.accessType ??
             (isEvergreen
@@ -503,241 +508,22 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
                       ? AccessType.adLocked
                       : AccessType.adLocked));
 
-        final isLocked = !canAccess;
-
-        return GestureDetector(
-          onTap: () => _onMeditationTap(meditation, playlist),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.getCardColor(context),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.getBorderColor(context)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                // Cover/Icon
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: _getCategoryColors(meditation.category),
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: meditation.coverImage.isNotEmpty
-                        ? RitualCoverImage(
-                            imageUrl: meditation.coverImage,
-                            fit: BoxFit.cover,
-                            memCacheWidth: 150, // Optimize
-                            fadeInDuration: Duration.zero,
-                            placeholder: (context, url) =>
-                                const SizedBox.shrink(),
-                            errorWidget: (context, url, error) => Icon(
-                              _getCategoryIcon(meditation.category),
-                              color: Colors.white,
-                              size: 24,
-                            ),
-                          )
-                        : Icon(
-                            _getCategoryIcon(meditation.category),
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-
-                // Title & Duration
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              meditation.title,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.getTextColor(context),
-                              ),
-                            ),
-                          ),
-                          // Access badge
-                          _buildAccessBadge(
-                            accessType,
-                            accessResult?.remainingUnlockTime,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.timer_outlined,
-                            size: 14,
-                            color: AppTheme.getMutedColor(context),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            meditation.formattedDuration,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.getMutedColor(context),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Category Tag
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppTheme.getSageColor(
-                                context,
-                              ).withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              meditation.category,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.getPrimary(context),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-
-                          // Action Button (Heart or Close)
-                          if (isSavedView)
-                            GestureDetector(
-                              onTap: () {
-                                final uid = AuthService().currentUserId;
-                                if (uid != null) {
-                                  FirestoreService().toggleListenLater(
-                                    uid,
-                                    meditation.id,
-                                    false,
-                                  );
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.withValues(alpha: 0.1),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.close,
-                                  size: 14,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            )
-                          else
-                            GestureDetector(
-                              onTap: () {
-                                final uid = AuthService().currentUserId;
-                                if (uid != null) {
-                                  FirestoreService().toggleFavorite(
-                                    uid,
-                                    meditation.id,
-                                    !isFavorite,
-                                  );
-                                }
-                              },
-                              child: Icon(
-                                isFavorite
-                                    ? Icons.favorite
-                                    : Icons.favorite_border_rounded,
-                                size: 16, // Slightly larger for tap
-                                color: isFavorite
-                                    ? Colors.redAccent.withValues(alpha: 0.8)
-                                    : AppTheme.getMutedColor(
-                                        context,
-                                      ).withValues(alpha: 0.5),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Lock or Play icon
-                GestureDetector(
-                  onTap: () {
-                    final audioPlayer = context.read<AudioPlayerProvider>();
-                    final isPlayingThis =
-                        audioPlayer.isPlaying &&
-                        audioPlayer.currentMeditation?.id == meditation.id;
-
-                    if (isPlayingThis) {
-                      audioPlayer.pause();
-                    } else if (isLocked) {
-                      // Delegate to main handler for paywall/ads
-                      _onMeditationTap(meditation, playlist);
-                    } else {
-                      // Accessible - Play Inline
-                      audioPlayer.play(meditation, playlist: playlist);
-                    }
-                  },
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: isLocked
-                          ? AppTheme.getMutedColor(
-                              context,
-                            ).withValues(alpha: 0.1)
-                          : AppTheme.getSageColor(
-                              context,
-                            ).withValues(alpha: 0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Consumer<AudioPlayerProvider>(
-                      builder: (context, audioPlayer, child) {
-                        final isPlayingThis =
-                            audioPlayer.isPlaying &&
-                            audioPlayer.currentMeditation?.id == meditation.id;
-
-                        return Icon(
-                          isPlayingThis
-                              ? Icons.pause
-                              : (isLocked
-                                    ? (accessType == AccessType.adLocked
-                                          ? Icons.play_circle_outline
-                                          : Icons.lock)
-                                    : Icons.play_arrow),
-                          color: isLocked
-                              ? AppTheme.getMutedColor(context)
-                              : AppTheme.getPrimary(context),
-                          size: 20,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        return MeditationCard(
+          meditation: meditation,
+          variant: MeditationCardVariant.full,
+          isFavorite: isFavorite,
+          isSaved: isSaved,
+          showAccessBadge: true,
+          accessBadge: _buildAccessBadge(
+            accessType,
+            accessResult?.remainingUnlockTime,
           ),
+          isLocked: accessType == AccessType.premiumLocked,
+          onTap: () => _onMeditationTap(meditation, playlist),
+          onFavoriteToggle: () => _toggleFavorite(meditation.id),
+          onSaveToggle: () => _toggleSave(meditation.id),
+          getCategoryIcon: _getCategoryIcon,
+          getCategoryColors: _getCategoryColors,
         );
       },
     );
@@ -754,6 +540,8 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
       case AccessType.evergreenFree:
         return const SizedBox.shrink();
       case AccessType.adUnlocked:
+        // Hide timer for subscribers
+        if (_isSubscriber) return const SizedBox.shrink();
         final hours = remainingTime?.inHours ?? 0;
         final minutes = (remainingTime?.inMinutes ?? 0) % 60;
         text = '${hours}h ${minutes}m';
@@ -762,6 +550,8 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
         icon = Icons.timer;
         break;
       case AccessType.adLocked:
+        // Hide AD badge for subscribers
+        if (_isSubscriber) return const SizedBox.shrink();
         text = 'AD';
         bgColor = Colors.blue.withValues(alpha: 0.15);
         textColor = Colors.blue.shade700;
@@ -769,8 +559,8 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
         break;
       case AccessType.premiumLocked:
         text = 'PRO';
-        bgColor = Colors.purple.withValues(alpha: 0.15);
-        textColor = Colors.purple.shade700;
+        bgColor = const Color(0xFF9C27B0); // Bright Purple
+        textColor = Colors.white;
         icon = Icons.star;
         break;
       case AccessType.subscriber:
@@ -809,16 +599,10 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
         return [const Color(0xFF5B4B8A), const Color(0xFF7B68A6)];
       case 'Focus':
         return [const Color(0xFF4A90A4), const Color(0xFF6BB3C9)];
-      case 'Anxiety':
-        return [const Color(0xFF8DA399), const Color(0xFFB5C9BD)];
-      case 'Stress':
-        return [const Color(0xFFD4A373), const Color(0xFFE9C6A0)];
-      case 'Morning':
-        return [const Color(0xFFF2A65A), const Color(0xFFFFC78A)];
-      case 'Evening':
-        return [const Color(0xFF6B5B95), const Color(0xFF9789B3)];
-      case 'Breathing':
-        return [const Color(0xFF88B7B5), const Color(0xFFAAD0CE)];
+      case 'Relax':
+        return [const Color(0xFFAAD0CE), const Color(0xFF88B7B5)];
+      case 'Nature':
+        return [const Color(0xFF588157), const Color(0xFFA3B18A)];
       default:
         return [AppTheme.sageGreen, AppTheme.sageGreenDark];
     }
@@ -830,160 +614,12 @@ class _ZenVaultScreenState extends State<ZenVaultScreen> {
         return Icons.bedtime;
       case 'Focus':
         return Icons.center_focus_strong;
-      case 'Anxiety':
-        return Icons.favorite;
-      case 'Stress':
+      case 'Relax':
         return Icons.spa;
-      case 'Morning':
-        return Icons.wb_sunny;
-      case 'Evening':
-        return Icons.nights_stay;
-      case 'Breathing':
-        return Icons.air;
+      case 'Nature':
+        return Icons.landscape;
       default:
         return Icons.self_improvement;
     }
-  }
-
-  Widget _buildPaywallSheet() {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.6,
-      decoration: BoxDecoration(
-        color: AppTheme.isDark(context)
-            ? AppTheme.backgroundDark
-            : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppTheme.getBorderColor(context),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 32),
-
-          // Premium Icon
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppTheme.sageGreen, AppTheme.sageGreenDark],
-              ),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.sageGreen.withValues(alpha: 0.3),
-                  blurRadius: 20,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.workspace_premium,
-              color: Colors.white,
-              size: 40,
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          Text(
-            'Unlock Premium',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.getTextColor(context),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              'Get unlimited access to all meditations, exclusive content, and advanced features.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: AppTheme.getMutedColor(context),
-                height: 1.5,
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
-
-          // Features
-          _buildFeatureRow(Icons.check_circle, 'All premium meditations'),
-          _buildFeatureRow(Icons.check_circle, 'Offline downloads'),
-          _buildFeatureRow(Icons.check_circle, 'Advanced statistics'),
-          _buildFeatureRow(Icons.check_circle, 'Priority support'),
-
-          const Spacer(),
-
-          // CTA Button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppTheme.sageGreen, AppTheme.sageGreenDark],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.sageGreen.withValues(alpha: 0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: const Center(
-                child: Text(
-                  'Start 7-Day Free Trial',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Then \$9.99/month • Cancel anytime',
-            style: TextStyle(
-              fontSize: 12,
-              color: AppTheme.getMutedColor(context),
-            ),
-          ),
-          const SizedBox(height: 32),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeatureRow(IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 6),
-      child: Row(
-        children: [
-          Icon(icon, color: AppTheme.getPrimary(context), size: 20),
-          const SizedBox(width: 12),
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 14,
-              color: AppTheme.getTextColor(context),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

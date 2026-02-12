@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../theme/app_theme.dart';
 import '../models/meditation.dart';
 import '../models/firestore_user.dart';
@@ -19,6 +18,14 @@ import 'saved_rituals_screen.dart';
 
 import 'audio_player_screen.dart';
 import '../widgets/mini_audio_player.dart';
+
+import '../widgets/dashboard_insight_card.dart';
+import '../widgets/dashboard_well_done_card.dart';
+import '../widgets/dashboard_header.dart';
+import '../widgets/dashboard_up_next_card.dart';
+import '../widgets/dashboard_discovery_card.dart';
+// import '../widgets/dashboard_waiting_card.dart';
+import '../widgets/daily_progress_panel.dart';
 
 /// Dashboard Home Screen - Redesigned to match reference UI
 /// Features: Up Next card, 2x2 stats grid, recent rituals, bottom nav
@@ -39,10 +46,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _streakIconUrl;
   int? _lastStreakForIcon;
 
+  // Ritual State (Async Loading)
+  Meditation? _currentRitual;
+  String _currentWindowLabel = '';
+  String _nextWindowLabel = ''; // For waiting card
+  bool _isLoadingRitual = true;
+
   // Ritual Windows state
   Timer? _countdownTimer;
-  Duration _timeUntilNextWindow = Duration.zero;
-  bool _isWindowCompleted = false;
+  final ValueNotifier<Duration> _timeUntilNextWindow = ValueNotifier(
+    Duration.zero,
+  );
+  final ValueNotifier<bool> _isWindowCompleted = ValueNotifier(false);
+
+  // Daily Progress Status
+  Map<int, String> _dailyStatuses = {};
 
   // Quotes list
   final List<String> _quotes = [
@@ -70,6 +88,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _currentQuote = (_quotes..shuffle()).first;
     _loadUserStats();
     _initRitualWindows();
+    _refreshRitualState();
     _fetchAndCacheMeditations();
   }
 
@@ -107,12 +126,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       debugPrint('Error fetching meditations: $e');
+    } finally {
+      // Ensure we refresh the state after fetching, even if it failed or cache was used
+      if (mounted) {
+        _refreshRitualState();
+      }
     }
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _notificationTimer?.cancel();
+    _timeUntilNextWindow.dispose();
+    _isWindowCompleted.dispose();
     super.dispose();
   }
 
@@ -123,34 +150,88 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Check completion state
     _checkWindowCompletion();
 
-    // Start periodic timer for countdown
+    // Start periodic timer for countdown and state refresh
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _updateCountdown();
+      // Periodically refresh state in case window changes (e.g. time passes)
+      // Check every minute or so would be better, but we can do a check:
+      if (DateTime.now().second == 0) {
+        _refreshRitualState();
+      }
     });
   }
 
-  void _updateCountdown() {
-    final remaining = RitualWindowService.getTimeUntilNextWindow();
+  Future<void> _refreshRitualState() async {
+    // Try to get current ritual
+    var ritual = await RitualWindowService.getCurrentWindowRitual();
+    var label = await RitualWindowService.getCurrentWindowLabel();
 
-    // Check if we crossed into a new window
-    if (remaining > _timeUntilNextWindow &&
-        _timeUntilNextWindow != Duration.zero) {
-      // New window started - reset completion state
-      _checkWindowCompletion();
+    String nextLabel = '';
+
+    // If no active ritual (waiting), get the NEXT one and show it immediately
+    if (ritual == null) {
+      ritual = await RitualWindowService.getNextWindowRitual();
+      // Update label to show what's coming (or we could keep it as "Next Ritual")
+      // But user wants to see it "Open", so maybe use the actual label of that window?
+      nextLabel = await RitualWindowService.getNextWindowLabel();
+      if (ritual != null) {
+        // If we found a next ritual, use its window label
+        // We can derive it or just use nextLabel
+        label = nextLabel;
+      }
+    } else {
+      // If currently active, next label logic remains
+      // (Though usually we only need nextLabel for the WaitingCard which we are removing)
     }
+
+    // Also refresh daily statuses
+    final statuses = await RitualWindowService.getDailyWindowStatuses(
+      DateTime.now(),
+    );
 
     if (mounted) {
-      setState(() {
-        _timeUntilNextWindow = remaining;
-      });
+      if (_currentRitual != ritual ||
+          _currentWindowLabel != label ||
+          _nextWindowLabel != nextLabel ||
+          _dailyStatuses != statuses) {
+        setState(() {
+          _currentRitual = ritual;
+          _currentWindowLabel = label;
+          _nextWindowLabel = nextLabel;
+          _dailyStatuses = statuses;
+          _isLoadingRitual = false;
+        });
+      } else {
+        // Just update loading state if needed
+        if (_isLoadingRitual) {
+          setState(() => _isLoadingRitual = false);
+        }
+      }
     }
+  }
+
+  void _updateCountdown() async {
+    // Use custom notification window times instead of fixed 4-hour windows
+    final remaining =
+        await RitualWindowService.getTimeUntilNextNotificationWindow();
+
+    // Check if we crossed into a new window
+    if (remaining > _timeUntilNextWindow.value &&
+        _timeUntilNextWindow.value != Duration.zero) {
+      // New window started - reset completion state
+      // New window started - reset completion state & refresh ritual
+      _checkWindowCompletion();
+      _refreshRitualState();
+    }
+
+    // ✅ No setState - only update ValueNotifier
+    _timeUntilNextWindow.value = remaining;
   }
 
   Future<void> _checkWindowCompletion() async {
     final completed = await RitualWindowService.isCurrentWindowCompleted();
-    if (mounted) {
-      setState(() => _isWindowCompleted = completed);
-    }
+    // ✅ No setState - only update ValueNotifier
+    _isWindowCompleted.value = completed;
   }
 
   void _loadUserStats() {
@@ -291,8 +372,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildHomeContent() {
-    final currentRitual = RitualWindowService.getCurrentWindowRitual();
-    final windowLabel = RitualWindowService.getCurrentWindowLabel();
+    // Use state variables instead of synchronous calls
+    final currentRitual = _currentRitual;
+    final windowLabel = _currentWindowLabel;
     final now = DateTime.now();
     final dateString = _formatDate(now);
 
@@ -304,7 +386,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header
-            _buildHeader(dateString),
+            DashboardHeader(
+              dateString: dateString,
+              userStats: _userStats,
+              currentUser: _authService.currentUser,
+            ),
 
             // Main content with padding
             Padding(
@@ -313,12 +399,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Window specific card (Up Next)
-                  if (currentRitual == null)
-                    _buildNoRitualsCard()
-                  else if (_isWindowCompleted)
-                    _buildWellDoneCard(windowLabel)
-                  else
-                    _buildUpNextCard(currentRitual, windowLabel),
+                  if (_isLoadingRitual)
+                    const Padding(
+                      padding: EdgeInsets.all(32.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  // Removed DashboardWaitingCard - we now show the ritual immediately
+                  else if (_isWindowCompleted.value)
+                    Column(
+                      children: [
+                        DashboardWellDoneCard(
+                          windowLabel: windowLabel,
+                          timeUntilNextWindow: _timeUntilNextWindow.value,
+                        ),
+                        const SizedBox(height: 16),
+                        DailyProgressPanel(statuses: _dailyStatuses),
+                      ],
+                    )
+                  else if (currentRitual != null)
+                    Column(
+                      children: [
+                        DashboardUpNextCard(
+                          ritual: currentRitual,
+                          windowLabel: windowLabel,
+                          timeUntilNextWindow: _timeUntilNextWindow.value,
+                          onCheckWindowCompletion: _checkWindowCompletion,
+                        ),
+                        const SizedBox(height: 16),
+                        DailyProgressPanel(statuses: _dailyStatuses),
+                      ],
+                    ),
 
                   const SizedBox(height: 24),
                   _buildSectionHeader('DISCOVER'),
@@ -365,7 +475,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: _buildInsightCard()),
+                      Expanded(
+                        child: DashboardInsightCard(
+                          minutesThisWeek: _userStats?.minutesThisWeek ?? 0,
+                          minutesLastWeek: _userStats?.minutesLastWeek ?? 0,
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(child: _buildQuoteCard()),
                     ],
@@ -411,7 +526,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildDiscoveryCard(Meditation data) {
-    return GestureDetector(
+    final isSaved = _userStats?.listenLaterIds.contains(data.id) ?? false;
+
+    return DashboardDiscoveryCard(
+      meditation: data,
+      isSaved: isSaved,
+      onSave: () async {
+        final uid = _authService.currentUserId;
+        if (uid == null) return;
+
+        await _firestoreService.toggleListenLater(uid, data.id, !isSaved);
+
+        // Show notification when saving
+        if (!isSaved && mounted) {
+          _showSavedNotification(data);
+        }
+      },
       onTap: () {
         Navigator.push(
           context,
@@ -420,175 +550,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       },
-      child: Container(
-        width: 200,
-        decoration: BoxDecoration(
-          color: AppTheme.getCardColor(context),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 1. Cover Image
-              if (data.coverImage.isNotEmpty)
-                CachedNetworkImage(
-                  imageUrl: data.coverImage,
-                  fit: BoxFit.cover,
-                  memCacheWidth: 400, // Optimization
-                  fadeInDuration: Duration.zero,
-                  placeholder: (context, url) => Container(
-                    color: AppTheme.getSageColor(
-                      context,
-                    ).withValues(alpha: 0.2),
-                  ),
-                  errorWidget: (context, url, error) => Container(
-                    color: AppTheme.getSageColor(
-                      context,
-                    ).withValues(alpha: 0.2),
-                    child: Icon(
-                      Icons.spa,
-                      color: AppTheme.getMutedColor(context),
-                    ),
-                  ),
-                )
-              else
-                Container(
-                  color: AppTheme.getSageColor(context).withValues(alpha: 0.2),
-                  child: Icon(
-                    Icons.spa,
-                    size: 40,
-                    color: AppTheme.getPrimary(context).withValues(alpha: 0.5),
-                  ),
-                ),
-
-              // 2. Gradient Overlay (Bottom)
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: 140,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withValues(alpha: 0.8),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // 3. Info Chips
-              Positioned(
-                bottom: 16,
-                left: 12,
-                right: 12,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Title
-                    Text(
-                      data.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Row for Category + Duration
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        _buildCardInfoChip(data.category.toUpperCase()),
-                        _buildCardInfoChip(data.formattedDuration),
-                        Builder(
-                          builder: (context) {
-                            final isSaved =
-                                _userStats?.listenLaterIds.contains(data.id) ??
-                                false;
-                            return GestureDetector(
-                              onTap: () async {
-                                final uid = _authService.currentUserId;
-                                if (uid != null) {
-                                  // Toggle logic
-                                  await _firestoreService.toggleListenLater(
-                                    uid,
-                                    data.id,
-                                    !isSaved,
-                                  );
-                                  if (mounted && !isSaved) {
-                                    // Only show notification when adding
-                                    _showSavedNotification(data);
-                                  }
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: isSaved
-                                      ? Colors.white
-                                      : Colors.white.withValues(alpha: 0.2),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  isSaved
-                                      ? Icons.bookmark
-                                      : Icons.bookmark_add_outlined,
-                                  size: 14,
-                                  color: isSaved
-                                      ? AppTheme.getPrimary(context)
-                                      : Colors.white,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
-              // Lock Icon for premium if needed
-              if (data.isPremium && !(_userStats?.isSubscriber ?? false))
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.4),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.lock_outline,
-                      color: Colors.white,
-                      size: 16,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -608,88 +569,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           color: Colors.white,
           letterSpacing: 0.5,
         ),
-      ),
-    );
-  }
-
-  Widget _buildInsightCard() {
-    final minutesThisWeek = _userStats?.minutesThisWeek ?? 0;
-    final minutesLastWeek = _userStats?.minutesLastWeek ?? 0;
-
-    // Calculate percentage change
-    double percentChange = 0;
-    if (minutesLastWeek > 0) {
-      percentChange =
-          ((minutesThisWeek - minutesLastWeek) / minutesLastWeek) * 100;
-    } else if (minutesThisWeek > 0) {
-      percentChange =
-          100; // 100% increase if last week was 0 but this week has activity
-    }
-
-    final isPositive = percentChange >= 0;
-    final absPercent = percentChange.abs().round();
-
-    return Container(
-      // width: double.infinity, // Flexible width
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.getLavenderCardDecoration(context),
-      child: Column(
-        // Vertical stack for compact grid
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Icon
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppTheme.isDark(context)
-                  ? Colors.white.withValues(alpha: 0.1)
-                  : const Color(
-                      0xFFD1E4E4,
-                    ), // Light teal/sage form the image background
-            ),
-            child: Icon(
-              Icons.psychology, // Head/Brain icon
-              color: AppTheme.getSageColor(context),
-              size: 20,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Text Content
-          Text(
-            'Performance', // Shortened title
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.getTextColor(context),
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          RichText(
-            text: TextSpan(
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.3,
-                color: AppTheme.getMutedColor(context),
-                fontFamily: 'Plus Jakarta Sans',
-              ),
-              children: [
-                const TextSpan(text: 'Consistency '),
-                TextSpan(
-                  text: isPositive ? '+$absPercent% ' : '-$absPercent% ',
-                  style: TextStyle(
-                    color: isPositive
-                        ? AppTheme.getPrimary(context)
-                        : Colors.red,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const TextSpan(text: 'this week.'),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -721,331 +600,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${days[date.weekday % 7]}, ${months[date.month - 1]} ${date.day}';
   }
 
-  Widget _buildHeader(String dateString) {
-    // Get current time for greeting
-    final hour = DateTime.now().hour;
-    String greeting;
-    if (hour >= 4 && hour < 12) {
-      greeting = 'Good Morning';
-    } else if (hour >= 12 && hour < 18) {
-      greeting = 'Good Afternoon';
-    } else {
-      greeting = 'Good Evening';
-    }
-
-    // Get user first name
-    String userName = 'Friend';
-    if (_userStats?.firstName != null && _userStats!.firstName!.isNotEmpty) {
-      userName = _userStats!.firstName!;
-    } else if (_userStats?.displayName != null &&
-        _userStats!.displayName.isNotEmpty) {
-      userName = _userStats!.displayName.split(' ').first;
-    } else if (_authService.currentUser?.displayName != null) {
-      userName = _authService.currentUser!.displayName!.split(' ').first;
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        24,
-        24, // Increased top padding for notch safety
-        24,
-        12,
-      ), // Reduced top/bottom padding
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                dateString.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 2,
-                  color: AppTheme.getMutedColor(context),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$greeting, $userName',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.getTextColor(context),
-                  letterSpacing: -0.5,
-                ),
-              ),
-            ],
-          ),
-          // Streak Icon Button (Top Right)
-          if (_userStats != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.getCardColor(context),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppTheme.getBorderColor(context)),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.local_fire_department_rounded,
-                    size: 20,
-                    color: AppTheme.getOrangeColor(context),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${_userStats?.currentStreak ?? 0}',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.getTextColor(context),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUpNextCard(Meditation ritual, String windowLabel) {
-    final countdown = RitualWindowService.formatCountdown(_timeUntilNextWindow);
-
-    return Container(
-      width: double.infinity,
-      height: 170, // Reduced from 240
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24), // Slightly smaller radius
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // 1. Background Image
-            if (ritual.coverImage.isNotEmpty)
-              CachedNetworkImage(
-                imageUrl: ritual.coverImage,
-                fit: BoxFit.cover,
-                fadeInDuration: Duration.zero,
-                placeholder: (context, url) => Container(
-                  color: AppTheme.sageGreenDark,
-                  child: const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  ),
-                ),
-                errorWidget: (context, url, error) =>
-                    Container(color: AppTheme.sageGreenDark),
-              )
-            else
-              Container(color: AppTheme.sageGreenDark),
-
-            // 2. Blur Effect
-            if (ritual.coverImage.isNotEmpty)
-              BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-                child: Container(color: Colors.black.withValues(alpha: 0.2)),
-              ),
-
-            // 3. Gradient Overlay for Readability
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.3),
-                    Colors.black.withValues(alpha: 0.7),
-                  ],
-                ),
-              ),
-            ),
-
-            // 4. Content
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.1),
-                          ),
-                        ),
-                        child: Text(
-                          windowLabel.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '10 min',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 0.8),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const Spacer(),
-
-                  Text(
-                    ritual.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                      height: 1.1,
-                      letterSpacing: -0.5,
-                      shadows: [
-                        Shadow(
-                          color: Colors.black45,
-                          blurRadius: 10,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-
-                  Text(
-                    'Start your mindful practice',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.white.withValues(alpha: 0.9),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.1),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.timer_outlined,
-                              size: 14,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'In: $countdown',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () async {
-                            final result = await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    BreathingSessionScreen(ritual: ritual),
-                              ),
-                            );
-                            if (result == true || result == null) {
-                              _checkWindowCompletion();
-                            }
-                          },
-                          child: Container(
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.play_arrow_rounded,
-                                  color: AppTheme.sageGreenDark,
-                                  size: 18,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Start',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.sageGreenDark,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   // ignore: unused_element
   Widget _buildUpNextCardLegacy(Meditation ritual, String windowLabel) {
     final minutes = ritual.duration;
-    final countdown = RitualWindowService.formatCountdown(_timeUntilNextWindow);
+    final countdown = RitualWindowService.formatCountdown(
+      _timeUntilNextWindow.value,
+    );
 
     return Container(
       width: double.infinity,
@@ -1214,141 +774,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildNoRitualsCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: AppTheme.getCardDecoration(context),
-      child: Column(
-        children: [
-          Icon(
-            Icons.spa_outlined,
-            size: 48,
-            color: AppTheme.getMutedColor(context),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No Rituals Available',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.getTextColor(context),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Your library is empty. Add new rituals to get started.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: AppTheme.getMutedColor(context),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWellDoneCard(String windowLabel) {
-    final countdown = RitualWindowService.formatCountdown(_timeUntilNextWindow);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppTheme.sageGreen.withValues(alpha: 0.2),
-            AppTheme.sageGreenDark.withValues(alpha: 0.3),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: AppTheme.sageGreen.withValues(alpha: 0.3),
-          width: 1.5,
-        ),
-      ),
-      child: Column(
-        children: [
-          // Checkmark icon
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppTheme.sageGreenDark,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.sageGreenDark.withValues(alpha: 0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.check_rounded,
-              color: Colors.white,
-              size: 32,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Well Done! 🎉',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.getTextColor(context),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'You completed your $windowLabel ritual.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: AppTheme.getTextColor(context).withValues(alpha: 0.7),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Next ritual countdown
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppTheme.isDark(context)
-                  ? Colors.white.withValues(alpha: 0.1)
-                  : Colors.white.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.schedule,
-                  size: 18,
-                  color: AppTheme.getTextColor(context).withValues(alpha: 0.9),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Next ritual in $countdown',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.getTextColor(
-                      context,
-                    ).withValues(alpha: 0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBottomNav() {
     return Container(
       // Remove horizontal padding to let Expanded items fill the width
@@ -1363,7 +788,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         // Distribute space equally
         children: [
           _buildNavItem(Icons.grid_view_rounded, 'Home', 0),
-          _buildNavItem(Icons.psychology_outlined, 'Reflect', 1),
+          _buildNavItem(Icons.library_music_outlined, 'Zen Vault', 1),
           _buildNavItem(Icons.analytics_outlined, 'Stats', 2),
           _buildNavItem(Icons.settings_outlined, 'Profile', 3),
         ],
@@ -1374,31 +799,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildNavItem(IconData icon, String label, int index) {
     final isSelected = _selectedNavIndex == index;
     return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque, // Ensures the entire area is tappable
-        onTap: () => setState(() => _selectedNavIndex = index),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              color: isSelected
-                  ? AppTheme.getPrimary(context)
-                  : AppTheme.getMutedColor(context).withValues(alpha: 0.4),
-              size: 24,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
+      child: Semantics(
+        label: label,
+        button: true,
+        selected: isSelected,
+        hint: isSelected
+            ? '$label tab, currently selected'
+            : 'Double tap to switch to $label tab',
+        child: GestureDetector(
+          behavior:
+              HitTestBehavior.opaque, // Ensures the entire area is tappable
+          onTap: () => setState(() => _selectedNavIndex = index),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
                 color: isSelected
                     ? AppTheme.getPrimary(context)
                     : AppTheme.getMutedColor(context).withValues(alpha: 0.4),
+                size: 24,
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected
+                      ? AppTheme.getPrimary(context)
+                      : AppTheme.getMutedColor(context).withValues(alpha: 0.4),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

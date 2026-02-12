@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -10,6 +11,8 @@ import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/offline_mode_service.dart';
 
+import '../providers/preview_audio_provider.dart';
+
 /// ✅ OPTIMIZED Audio Player Provider
 /// Key changes:
 /// 1. Separate ValueNotifiers for granular updates
@@ -20,6 +23,13 @@ class AudioPlayerProvider extends ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
+
+  // Dependency for mutual exclusion
+  PreviewAudioProvider? _previewProvider;
+
+  void setPreviewProvider(PreviewAudioProvider provider) {
+    _previewProvider = provider;
+  }
 
   // ✅ NEW: Granular notifiers for specific UI elements
   final ValueNotifier<Duration> positionNotifier = ValueNotifier(Duration.zero);
@@ -33,7 +43,8 @@ class AudioPlayerProvider extends ChangeNotifier {
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
-  bool _isLooping = false;
+  bool _isLooping = true;
+  bool _isShuffleMode = false;
   double _volume = 1.0;
 
   // Stats tracking
@@ -50,6 +61,7 @@ class AudioPlayerProvider extends ChangeNotifier {
   Duration get duration => _duration;
   Duration get position => _position;
   bool get isLooping => _isLooping;
+  bool get isShuffleMode => _isShuffleMode;
   double get volume => _volume;
   bool get hasNext => _queue.isNotEmpty && _currentIndex < _queue.length - 1;
   bool get hasPrevious => _queue.isNotEmpty && _currentIndex > 0;
@@ -63,17 +75,15 @@ class AudioPlayerProvider extends ChangeNotifier {
     _audioPlayer.positionStream.listen((newPosition) {
       _position = newPosition;
       positionNotifier.value = newPosition;
-      // DON'T call notifyListeners() here!
-    });
+    }, onError: (e) => debugPrint('Position stream error: $e'));
 
     // ✅ Duration updates
     _audioPlayer.durationStream.listen((newDuration) {
       if (newDuration != null && _duration != newDuration) {
         _duration = newDuration;
         durationNotifier.value = newDuration;
-        // Only notify if significantly different (avoid micro-updates)
       }
-    });
+    }, onError: (e) => debugPrint('Duration stream error: $e'));
 
     // ✅ Player state updates
     _audioPlayer.playerStateStream.listen((state) {
@@ -81,122 +91,159 @@ class AudioPlayerProvider extends ChangeNotifier {
       _isPlaying = state.playing;
       isPlayingNotifier.value = state.playing;
 
-      // ✅ Only notify main listeners on actual play/pause change
       if (wasPlaying != _isPlaying) {
         notifyListeners();
       }
 
       _handleStatsTracking(_isPlaying);
 
-      // Auto-advance logic
+      // Auto-advance is handled by ConcatenatingAudioSource now
+      // We just need to handle completion of the *entire* playlist if not looping
       if (state.processingState == ProcessingState.completed) {
-        if (_isLooping) {
-          _audioPlayer.seek(Duration.zero);
-          _audioPlayer.play();
-        } else {
-          // 100% Completion Haptics
-          if (!_hapticsPlayed[100]!) {
-            HapticFeedback.lightImpact();
-            Future.delayed(const Duration(milliseconds: 150), () {
-              HapticFeedback.lightImpact();
-              Future.delayed(
-                const Duration(milliseconds: 150),
-                HapticFeedback.lightImpact,
-              );
-            });
-            _hapticsPlayed[100] = true;
-          }
+        // If loop mode is off and we finished the last item
+        if (!_isLooping && !hasNext) {
+          _handleCompletion();
+        }
+      }
+    }, onError: (e) => debugPrint('Player state stream error: $e'));
 
-          _isPlaying = false;
-          isPlayingNotifier.value = false;
-          _position = Duration.zero;
-          positionNotifier.value = Duration.zero;
-          notifyListeners(); // OK here - major state change
+    // ✅ Current Index Stream (for Playlist/Queue sync)
+    _audioPlayer.currentIndexStream.listen((index) {
+      if (index != null && _queue.isNotEmpty && index < _queue.length) {
+        if (_currentIndex != index) {
+          _currentIndex = index;
+          _currentMeditation = _queue[index];
+          _resetStatsForNewTrack();
+          notifyListeners();
         }
       }
     });
+
+    // ✅ Loop Mode sync
+    _audioPlayer.loopModeStream.listen((loopMode) {
+      _isLooping = loopMode == LoopMode.all || loopMode == LoopMode.one;
+      notifyListeners();
+    });
+
+    // ✅ Shuffle Mode sync
+    _audioPlayer.shuffleModeEnabledStream.listen((shuffleEnabled) {
+      _isShuffleMode = shuffleEnabled;
+      notifyListeners();
+    });
+  }
+
+  void _resetStatsForNewTrack() {
+    _currentSessionId = DateTime.now().toIso8601String();
+    _hasMarkedComplete = false;
+    _listenSeconds = 0;
+    _secondsSinceLastLog = 0;
+    _hapticsPlayed.updateAll((key, value) => false);
+    _statsTimer?.cancel();
+    _hapticsSubscription?.cancel();
+    if (_isPlaying) {
+      _handleStatsTracking(true);
+    }
+  }
+
+  void _handleCompletion() {
+    // 100% Completion Haptics
+    if (!_hapticsPlayed[100]!) {
+      HapticFeedback.lightImpact();
+      Future.delayed(const Duration(milliseconds: 150), () {
+        HapticFeedback.lightImpact();
+        Future.delayed(
+          const Duration(milliseconds: 150),
+          HapticFeedback.lightImpact,
+        );
+      });
+      _hapticsPlayed[100] = true;
+    }
+
+    _isPlaying = false;
+    isPlayingNotifier.value = false;
+    _position = Duration.zero;
+    positionNotifier.value = Duration.zero;
+    notifyListeners();
   }
 
   /// Start playing a new meditation.
   Future<void> play(Meditation meditation, {List<Meditation>? playlist}) async {
-    // If playlist provided, update queue
+    // 1. Update Internal Queue State
     if (playlist != null) {
       _queue = playlist;
     } else if (_queue.isEmpty || !_queue.contains(meditation)) {
       _queue = [meditation];
     }
 
-    // Update index
-    _currentIndex = _queue.indexWhere((m) => m.id == meditation.id);
-    if (_currentIndex == -1) {
-      _queue = [meditation];
-      _currentIndex = 0;
-    }
+    // Stop any active preview to prevent overlap
+    _previewProvider?.stopPreview();
 
-    // If same meditation, just toggle play if paused
-    if (_currentMeditation?.id == meditation.id) {
-      if (!_isPlaying) {
-        await resume();
-      }
-      return;
-    }
+    final int targetIndex = _queue.indexWhere((m) => m.id == meditation.id);
+    _currentIndex = targetIndex != -1 ? targetIndex : 0;
+    _currentMeditation = _queue[_currentIndex];
 
-    // Stop previous
-    await _audioPlayer.stop();
-
-    // Update State
-    _currentMeditation = meditation;
-    _currentSessionId = DateTime.now().toIso8601String();
-    _hasMarkedComplete = false;
-    _listenSeconds = 0;
-    _secondsSinceLastLog = 0;
-    _hapticsPlayed.updateAll((key, value) => false);
+    // 2. Reset visual state
     _isPlaying = true;
     isPlayingNotifier.value = true;
-
-    _statsTimer?.cancel();
-    _hapticsSubscription?.cancel();
-
-    // ✅ Notify once for major state change
+    _resetStatsForNewTrack();
     notifyListeners();
 
     try {
-      if (meditation.audioUrl.isNotEmpty) {
-        Uri? audioUri;
+      // 3. Build Audio Sources for the ENTIRE queue
+      final List<AudioSource> audioSources = [];
+      final offlineService = OfflineModeService();
 
+      for (var m in _queue) {
+        if (m.audioUrl.isEmpty) continue;
+
+        Uri audioUri;
         if (kIsWeb) {
-          audioUri = Uri.parse(meditation.audioUrl);
+          audioUri = Uri.parse(m.audioUrl);
         } else {
-          // Check for offline download
-          final offlineService = OfflineModeService();
-          if (await offlineService.isTrackDownloaded(meditation.id)) {
-            final path = await offlineService.getLocalFilePath(meditation.id);
+          if (await offlineService.isTrackDownloaded(m.id)) {
+            final path = await offlineService.getLocalFilePath(m.id);
             audioUri = Uri.file(path);
-            debugPrint('Playing from offline storage: $path');
           } else {
-            audioUri = Uri.parse(meditation.audioUrl);
+            audioUri = Uri.parse(m.audioUrl);
           }
         }
 
-        // Just Audio Background Setup
+        // Media Item for Notification
         final mediaItem = MediaItem(
-          id: meditation.id,
-          album: meditation.category,
-          title: meditation.title,
-          artUri: meditation.coverImage.isNotEmpty
-              ? Uri.parse(meditation.coverImage)
-              : null,
+          id: m.id,
+          album: m.category,
+          title: m.title,
+          artUri: m.coverImage.isNotEmpty ? Uri.parse(m.coverImage) : null,
         );
 
         if (kIsWeb || audioUri.scheme == 'file') {
-          await _audioPlayer.setAudioSource(AudioSource.uri(audioUri));
+          audioSources.add(AudioSource.uri(audioUri, tag: mediaItem));
         } else {
-          await _audioPlayer.setAudioSource(LockCachingAudioSource(audioUri));
+          audioSources.add(LockCachingAudioSource(audioUri, tag: mediaItem));
         }
-
-        await _audioPlayer.setVolume(_volume);
-        await _audioPlayer.play();
       }
+
+      // 4. Set Source to Player (Concatenating)
+      // Note: Recreating the source every time 'play' is called ensures sync.
+      // Optimization: We could check if current source is same playlist.
+      await _audioPlayer.setAudioSource(
+        ConcatenatingAudioSource(children: audioSources),
+        initialIndex: _currentIndex,
+      );
+
+      // 5. Configure Player
+      await _audioPlayer.setVolume(_volume);
+      // Default to LoopMode.off for playlist, allowing auto-advance.
+      // Or user preference. If we want auto-advance, use LoopMode.off (stops at end of list)
+      // or LoopMode.all (loops list).
+      // Existing logic had `_isLooping` default true. Let's respect `_isLooping`.
+      // If `_isLooping` is true, we probably want `LoopMode.all` for a playlist?
+      // Or `LoopMode.one`?
+      // User request implies "next/previous", so likely expects a playlist flow.
+      await _audioPlayer.setLoopMode(_isLooping ? LoopMode.all : LoopMode.off);
+
+      // 6. Play
+      await _audioPlayer.play();
     } catch (e) {
       debugPrint('Error playing audio: $e');
       _isPlaying = false;
@@ -206,10 +253,23 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   Future<void> pause() async {
+    // Optimistic UI update
+    if (_isPlaying) {
+      isPlayingNotifier.value = false;
+      _isPlaying = false;
+      notifyListeners();
+    }
     await _audioPlayer.pause();
   }
 
   Future<void> resume() async {
+    _previewProvider?.stopPreview();
+    // Optimistic UI update
+    if (!_isPlaying) {
+      isPlayingNotifier.value = true;
+      _isPlaying = true;
+      notifyListeners();
+    }
     await _audioPlayer.play();
   }
 
@@ -249,14 +309,27 @@ class AudioPlayerProvider extends ChangeNotifier {
     await seek(newPos > _duration ? _duration : newPos);
   }
 
-  void toggleLoop() {
-    _isLooping = !_isLooping;
-    if (_isLooping) {
-      _audioPlayer.setLoopMode(LoopMode.one);
-    } else {
-      _audioPlayer.setLoopMode(LoopMode.off);
+  Future<void> playRandom() async {
+    try {
+      final meditations = await _firestoreService.getAllMeditations();
+      if (meditations.isEmpty) return;
+
+      final random = Random();
+      Meditation nextMeditation;
+
+      if (meditations.length > 1 && _currentMeditation != null) {
+        // Try to pick a different one
+        do {
+          nextMeditation = meditations[random.nextInt(meditations.length)];
+        } while (nextMeditation.id == _currentMeditation!.id);
+      } else {
+        nextMeditation = meditations[random.nextInt(meditations.length)];
+      }
+
+      await play(nextMeditation);
+    } catch (e) {
+      debugPrint('Error playing random track: $e');
     }
-    notifyListeners();
   }
 
   void setVolume(double value) {
@@ -265,23 +338,41 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleShuffle() {
+    _isShuffleMode = !_isShuffleMode;
+    _audioPlayer.setShuffleModeEnabled(_isShuffleMode);
+    notifyListeners();
+  }
+
   Future<void> skipNext() async {
-    if (hasNext) {
-      _hapticsPlayed.updateAll((key, value) => false); // Reset haptics
-      await play(_queue[_currentIndex + 1]);
+    try {
+      if (_isShuffleMode) {
+        // If "Global Shuffle" behavior is desired, we keep playRandom()
+        // But for notification compat, we need the queue to be the random list.
+        // For now, let's trust the queue is what the user wants.
+        // If the user wants global shuffle, they should start a "Random" playlist.
+        await _audioPlayer.seekToNext();
+      } else if (_audioPlayer.hasNext) {
+        await _audioPlayer.seekToNext();
+      }
+    } catch (e) {
+      debugPrint('Error skipping next: $e');
     }
   }
 
   Future<void> skipPrevious() async {
-    if (_position.inSeconds > 3) {
-      await seek(Duration.zero);
-      return;
-    }
-    if (hasPrevious) {
-      _hapticsPlayed.updateAll((key, value) => false); // Reset haptics
-      await play(_queue[_currentIndex - 1]);
-    } else {
-      await seek(Duration.zero);
+    try {
+      if (_position.inSeconds > 3) {
+        await seek(Duration.zero);
+        return;
+      }
+      if (_audioPlayer.hasPrevious) {
+        await _audioPlayer.seekToPrevious();
+      } else {
+        await seek(Duration.zero);
+      }
+    } catch (e) {
+      debugPrint('Error skipping previous: $e');
     }
   }
 
@@ -306,6 +397,12 @@ class AudioPlayerProvider extends ChangeNotifier {
           if (_listenSeconds >= threshold) {
             _markSessionComplete();
           }
+        }
+
+        // Auto-skip logic: If shuffle is on and listening for 30+ mins
+        if (_isShuffleMode && _listenSeconds >= 1800) {
+          debugPrint('Auto-skipping after 30 mins');
+          playRandom();
         }
       });
 

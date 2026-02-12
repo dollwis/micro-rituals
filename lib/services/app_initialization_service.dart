@@ -26,8 +26,9 @@ class AppInitializationService {
 
     try {
       // 1. Initialize Firebase
-      // Check if already initialized to avoid errors during hot restart
+      // Already initialized in main.dart
       if (Firebase.apps.isEmpty) {
+        // Fallback just in case
         await Firebase.initializeApp(
           options: DefaultFirebaseOptions.currentPlatform,
         );

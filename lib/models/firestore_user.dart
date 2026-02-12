@@ -55,9 +55,14 @@ class FirestoreUser {
   });
 
   /// Check if subscription is active
+  /// Returns true if user is a subscriber
+  /// If subscriptionExpiry is null, treats as lifetime subscription
+  /// If subscriptionExpiry is set, checks if it's in the future
   bool get hasActiveSubscription {
     if (!isSubscriber) return false;
-    if (subscriptionExpiry == null) return false;
+    // If no expiry date, treat as lifetime subscription
+    if (subscriptionExpiry == null) return true;
+    // If expiry date exists, check if still valid
     return subscriptionExpiry!.isAfter(DateTime.now());
   }
 
