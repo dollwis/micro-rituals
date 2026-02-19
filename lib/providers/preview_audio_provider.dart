@@ -21,6 +21,19 @@ class PreviewAudioProvider extends ChangeNotifier {
   void _initPreviewPlayer() {
     _previewPlayer = AudioPlayer();
 
+    // Configure for preview (respect silent mode, mix/duck others if needed)
+    // But since we are pausing the main player, we just need standard playback.
+    // However, for previews, 'ambient' or 'playback' is fine.
+    // 'ambient' respects ringer switch (good for previews).
+    _previewPlayer!.setAudioSource(
+      AudioSource.uri(Uri.parse('')), // Placeholder to init session if needed
+      preload: false,
+    );
+    // Note: just_audio usually handles session on play() based on defaults.
+    // If we wanted specific category:
+    // final session = await AudioSession.instance;
+    // await session.configure(const AudioSessionConfiguration.music());
+
     // Listen to player state
     _previewPlayer!.playerStateStream.listen((state) {
       final playing = state.playing;

@@ -29,7 +29,19 @@ class AudioPlayerProvider extends ChangeNotifier {
   PreviewAudioProvider? _previewProvider;
 
   void setPreviewProvider(PreviewAudioProvider provider) {
-    _previewProvider = provider;
+    if (_previewProvider != provider) {
+      _previewProvider?.removeListener(_handlePreviewChange);
+      _previewProvider = provider;
+      _previewProvider?.addListener(_handlePreviewChange);
+    }
+  }
+
+  void _handlePreviewChange() {
+    if (_previewProvider != null &&
+        _previewProvider!.isPreviewPlaying &&
+        _isPlaying) {
+      pause();
+    }
   }
 
   // ✅ NEW: Granular notifiers for specific UI elements
@@ -465,6 +477,7 @@ class AudioPlayerProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _previewProvider?.removeListener(_handlePreviewChange);
     _statsTimer?.cancel();
     _hapticsSubscription?.cancel();
     positionNotifier.dispose();
