@@ -12,6 +12,7 @@ import '../services/firestore_service.dart';
 import '../services/offline_mode_service.dart';
 
 import '../providers/preview_audio_provider.dart';
+import '../services/ad_service.dart';
 
 /// ✅ OPTIMIZED Audio Player Provider
 /// Key changes:
@@ -53,7 +54,6 @@ class AudioPlayerProvider extends ChangeNotifier {
   int _listenSeconds = 0;
   int _secondsSinceLastLog = 0;
   bool _hasMarkedComplete = false;
-  String? _currentSessionId;
 
   // Getters
   Meditation? get currentMeditation => _currentMeditation;
@@ -133,7 +133,6 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   void _resetStatsForNewTrack() {
-    _currentSessionId = DateTime.now().toIso8601String();
     _hasMarkedComplete = false;
     _listenSeconds = 0;
     _secondsSinceLastLog = 0;
@@ -447,6 +446,8 @@ class AudioPlayerProvider extends ChangeNotifier {
             debugPrint('Error logging minute: $e');
           });
       debugPrint('Logged 1 mindful minute (Provider)');
+      // Track for Ad Service
+      AdService().trackListeningTime();
     }
   }
 

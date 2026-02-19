@@ -41,7 +41,7 @@ class DashboardInsightCard extends StatelessWidget {
             height: 40,
             decoration: BoxDecoration(
               color: AppTheme.isDark(context)
-                  ? Colors.white.withOpacity(0.1)
+                  ? Colors.white.withValues(alpha: 0.1)
                   : const Color(
                       0xFFD1E4E4,
                     ), // Light teal/sage form the image background

@@ -288,41 +288,40 @@ class FirestoreService {
       }
     }
 
+    bool isNewDay = true;
     if (lastMidnight != null && lastMidnight.isAtSameMomentAs(nowMidnight)) {
-      // Already completed today
-      newCompletedToday = user.completedToday + 1;
-      // Streak stays same
-    } else if (lastMidnight != null &&
-        nowMidnight.difference(lastMidnight).inHours >=
-            20 && // Tolerance for DST/Timezone shifts, checking ~1 day
-        nowMidnight.difference(lastMidnight).inHours <= 28) {
-      // Crude check? No, let's use days from midnight.
+      isNewDay = false;
+    }
 
-      // Better: subtract 1 day from nowMidnight and check equality
+    if (isNewDay) {
+      // It's a new day
+      newCompletedToday = 1;
+
+      // Check if yesterday was completed
+      // If we missed yesterday, reset streak to 0 immediately
+      // If we maintained history, streak allows continuation
+
       final yesterdayMidnight = nowMidnight.subtract(const Duration(days: 1));
 
-      if (lastMidnight.isAtSameMomentAs(yesterdayMidnight)) {
-        // Completed yesterday
-        newStreak++;
-        newCompletedToday = 1;
-      } else {
-        // Missed a day
-        newStreak = 1;
-        newCompletedToday = 1;
+      bool wasYesterday = false;
+      if (lastMidnight != null) {
+        // Check if last completion was exactly yesterday
+        wasYesterday = lastMidnight.isAtSameMomentAs(yesterdayMidnight);
       }
+
+      if (!wasYesterday) {
+        // Missed a day (or first ever), reset streak
+        newStreak = 0;
+      }
+      // If wasYesterday, we keep newStreak as is (waiting for 3rd ritual to increment)
     } else {
-      // Logic for difference > 1 day or first time
-      // Let's refine the "yesterday" check above simpler:
-      final yesterdayMidnight = nowMidnight.subtract(const Duration(days: 1));
-      if (lastMidnight != null &&
-          lastMidnight.isAtSameMomentAs(yesterdayMidnight)) {
-        newStreak++;
-        newCompletedToday = 1;
-      } else {
-        // Reset
-        newStreak = 1;
-        newCompletedToday = 1;
-      }
+      // Same day
+      newCompletedToday = user.completedToday + 1;
+    }
+
+    // THE RULE: 3 Rituals per day to count for next streak level
+    if (newCompletedToday == 3) {
+      newStreak++;
     }
 
     if (_isGuest) {
@@ -481,11 +480,12 @@ class FirestoreService {
       return _localUserService.userStream;
     }
 
-    final today = _getTodayString();
-
     return _usersCollection.doc(uid).snapshots().map((doc) {
       if (doc.exists) {
         var user = FirestoreUser.fromJson(doc.data()!);
+
+        // Evaluate today fresh on each snapshot (avoids stale date after midnight)
+        final today = _getTodayString();
 
         // Reset completedToday if it's a new day
         if (user.lastCompletionDay != today) {
@@ -903,7 +903,139 @@ class FirestoreService {
   }
 
   /// Delete a meditation (admin use)
+  /// Delete a meditation (admin use)
   Future<void> deleteMeditation(String id) async {
     await _meditationsCollection.doc(id).delete();
+  }
+
+  // ============ FEEDBACK / SUPPORT ============
+
+  // ============ SUPPORT TICKET SYSTEM ============
+
+  /// Create a new support ticket
+  Future<String> createTicket({
+    required String uid, // User UID
+    required String title,
+    required String message,
+    required String? userName,
+    required String? userEmail,
+  }) async {
+    final batch = _firestore.batch();
+    final ticketRef = _firestore.collection('support_tickets').doc();
+    final messageRef = ticketRef.collection('messages').doc();
+
+    // 1. Create Ticket
+    batch.set(ticketRef, {
+      'uid': uid,
+      'title': title,
+      'last_message': message,
+      'last_updated': FieldValue.serverTimestamp(),
+      'has_unread_user': false, // User just sent it, so they read it
+      'has_unread_admin': true,
+      'user_name': userName ?? 'Unknown',
+      'user_email': userEmail ?? 'Unknown',
+      'created_at': FieldValue.serverTimestamp(),
+      'status': 'open',
+    });
+
+    // 2. Add First Message
+    batch.set(messageRef, {
+      'message': message,
+      'is_from_admin': false,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+    return ticketRef.id;
+  }
+
+  /// Stream tickets for a specific user (Inbox)
+  Stream<List<Map<String, dynamic>>> streamUserTickets(String uid) {
+    return _firestore
+        .collection('support_tickets')
+        .where('uid', isEqualTo: uid)
+        .orderBy('last_updated', descending: true)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs.map((doc) {
+            final data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList();
+        });
+  }
+
+  /// Stream all tickets (Admin View)
+  Stream<List<Map<String, dynamic>>> streamAllTickets() {
+    return _firestore
+        .collection('support_tickets')
+        .orderBy('last_updated', descending: true)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs.map((doc) {
+            final data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList();
+        });
+  }
+
+  /// Send a message to an existing ticket
+  Future<void> sendMessageToTicket({
+    required String ticketId,
+    required String message,
+    required bool isFromAdmin,
+  }) async {
+    final batch = _firestore.batch();
+    final ticketRef = _firestore.collection('support_tickets').doc(ticketId);
+    final messageRef = ticketRef.collection('messages').doc();
+
+    // 1. Add Message
+    batch.set(messageRef, {
+      'message': message,
+      'is_from_admin': isFromAdmin,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    // 2. Update Ticket Metadata
+    final Map<String, dynamic> ticketUpdate = {
+      'last_message': message,
+      'last_updated': FieldValue.serverTimestamp(),
+    };
+
+    if (isFromAdmin) {
+      ticketUpdate['has_unread_user'] = true;
+    } else {
+      ticketUpdate['has_unread_admin'] = true;
+    }
+
+    batch.set(ticketRef, ticketUpdate, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+
+  /// Stream messages for a specific ticket
+  Stream<List<Map<String, dynamic>>> streamTicketMessages(String ticketId) {
+    return _firestore
+        .collection('support_tickets')
+        .doc(ticketId)
+        .collection('messages')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs.map((doc) {
+            final data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList();
+        });
+  }
+
+  /// Mark ticket as read
+  Future<void> markTicketRead(String ticketId, {required bool isAdmin}) async {
+    final fieldToClear = isAdmin ? 'has_unread_admin' : 'has_unread_user';
+    await _firestore.collection('support_tickets').doc(ticketId).update({
+      fieldToClear: false,
+    });
   }
 }

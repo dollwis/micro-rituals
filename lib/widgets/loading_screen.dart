@@ -17,7 +17,7 @@ class LoadingScreen extends StatelessWidget {
               width: 80,
               height: 80,
               decoration: BoxDecoration(
-                color: AppTheme.sagePrimary.withOpacity(0.2),
+                color: AppTheme.sagePrimary.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: Icon(

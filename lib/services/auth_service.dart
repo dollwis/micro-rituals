@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/foundation.dart';
 
 /// Authentication service handling Google and Facebook sign-in
 class AuthService {
@@ -32,7 +34,9 @@ class AuthService {
         googleUser = await _googleSignIn.signIn();
       } catch (e) {
         if (e.toString().contains('Future already completed')) {
-          print('Google Sign-In error: Future already completed. Ignoring.');
+          debugPrint(
+            'Google Sign-In error: Future already completed. Ignoring.',
+          );
           return null;
         }
         rethrow;
@@ -56,7 +60,7 @@ class AuthService {
       // Sign in to Firebase with the Google credential
       return await _auth.signInWithCredential(credential);
     } catch (e) {
-      print('Error signing in with Google: $e');
+      debugPrint('Error signing in with Google: $e');
       rethrow;
     }
   }
@@ -65,20 +69,34 @@ class AuthService {
   /// Note: Facebook sign-in requires flutter_facebook_auth package
   /// and additional setup. For now, this is a placeholder.
   Future<UserCredential?> signInWithFacebook() async {
-    // Facebook sign-in requires more complex setup including:
-    // 1. Facebook Developer App configuration
-    // 2. flutter_facebook_auth package
-    // 3. Platform-specific setup (AndroidManifest.xml, Info.plist)
-    // For web, we can use Firebase's built-in popup method
     try {
-      final facebookProvider = FacebookAuthProvider();
-      facebookProvider.addScope('email');
-      facebookProvider.addScope('public_profile');
+      if (kIsWeb) {
+        // Web: use Firebase's built-in popup method
+        final facebookProvider = FacebookAuthProvider();
+        facebookProvider.addScope('email');
+        facebookProvider.addScope('public_profile');
+        return await _auth.signInWithPopup(facebookProvider);
+      } else {
+        // Mobile (iOS/Android)
+        final LoginResult result = await FacebookAuth.instance.login();
 
-      // Use popup for web
-      return await _auth.signInWithPopup(facebookProvider);
+        if (result.status == LoginStatus.success) {
+          final AccessToken accessToken = result.accessToken!;
+          final OAuthCredential credential = FacebookAuthProvider.credential(
+            accessToken.tokenString,
+          );
+          return await _auth.signInWithCredential(credential);
+        } else if (result.status == LoginStatus.cancelled) {
+          return null;
+        } else {
+          throw FirebaseAuthException(
+            code: 'sub-error',
+            message: result.message,
+          );
+        }
+      }
     } catch (e) {
-      print('Error signing in with Facebook: $e');
+      debugPrint('Error signing in with Facebook: $e');
       rethrow;
     }
   }
@@ -95,7 +113,7 @@ class AuthService {
       );
     } catch (e) {
       // Create specific error for rethrowing or handling in UI
-      print('Error signing in with email: $e');
+      debugPrint('Error signing in with email: $e');
       rethrow;
     }
   }
@@ -111,7 +129,7 @@ class AuthService {
         password: password,
       );
     } catch (e) {
-      print('Error creating account: $e');
+      debugPrint('Error creating account: $e');
       rethrow;
     }
   }
@@ -121,7 +139,7 @@ class AuthService {
     try {
       return await _auth.signInAnonymously();
     } catch (e) {
-      print('Error signing in anonymously: $e');
+      debugPrint('Error signing in anonymously: $e');
       rethrow;
     }
   }

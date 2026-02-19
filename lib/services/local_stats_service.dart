@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/firestore_user.dart';
 import '../models/activity_record.dart';
@@ -41,7 +42,7 @@ class LocalStatsService {
       final firestoreJson = _convertStringsToTimestamps(json);
       return FirestoreUser.fromJson(firestoreJson);
     } catch (e) {
-      print('Error loading local stats: $e');
+      debugPrint('Error loading local stats: $e');
       return null;
     }
   }
@@ -80,7 +81,7 @@ class LocalStatsService {
           .map((json) => ActivityRecord.fromJson(json as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      print('Error loading pending activities: $e');
+      debugPrint('Error loading pending activities: $e');
       return [];
     }
   }
@@ -145,7 +146,7 @@ class LocalStatsService {
         // Mark as synced
         await markActivitySynced(activity.id);
       } catch (e) {
-        print('Error syncing activity ${activity.id}: $e');
+        debugPrint('Error syncing activity ${activity.id}: $e');
         // Continue with other activities
       }
     }

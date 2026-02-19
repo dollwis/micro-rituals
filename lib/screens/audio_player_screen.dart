@@ -19,10 +19,7 @@ class AudioPlayerScreen extends StatefulWidget {
   State<AudioPlayerScreen> createState() => _AudioPlayerScreenState();
 }
 
-class _AudioPlayerScreenState extends State<AudioPlayerScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _rippleController;
-
+class _AudioPlayerScreenState extends State<AudioPlayerScreen> {
   @override
   void initState() {
     super.initState();
@@ -33,17 +30,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen>
         player.play(widget.meditation, playlist: widget.playlist);
       }
     });
-
-    _rippleController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 4),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _rippleController.dispose();
-    super.dispose();
   }
 
   @override
@@ -64,12 +50,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen>
           final currentMeditation =
               player.currentMeditation ?? widget.meditation;
           final isPlaying = player.isPlaying;
-
-          if (!isPlaying) {
-            _rippleController.stop();
-          } else if (!_rippleController.isAnimating) {
-            _rippleController.repeat();
-          }
 
           return SafeArea(
             child: LayoutBuilder(
@@ -136,11 +116,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen>
                             alignment: Alignment.center,
                             children: [
                               // Ripples (Subtle)
-                              if (isPlaying) ...[
-                                _buildRipple(1, primaryColor, artworkSize),
-                                _buildRipple(2, primaryColor, artworkSize),
-                                _buildRipple(3, primaryColor, artworkSize),
-                              ],
 
                               // Main Image Container
                               Container(
@@ -346,17 +321,6 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen>
     );
   }
 
-  Widget _buildRipple(int index, Color color, double size) {
-    return AnimatedBuilder(
-      animation: _rippleController,
-      builder: (context, child) {
-        // final value = (_rippleController.value + (index * 0.33)) % 1.0;
-        // Unused for now as ripples are disabled
-        return const SizedBox.shrink();
-      },
-    );
-  }
-
   Widget _buildTransportButton({
     required IconData icon,
     required double size,
@@ -367,7 +331,9 @@ class _AudioPlayerScreenState extends State<AudioPlayerScreen>
       onPressed: onTap,
       icon: Icon(icon),
       iconSize: size,
-      color: onTap != null ? color.withOpacity(0.8) : color.withOpacity(0.1),
+      color: onTap != null
+          ? color.withValues(alpha: 0.8)
+          : color.withValues(alpha: 0.1),
       splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
       hoverColor: Colors.transparent,

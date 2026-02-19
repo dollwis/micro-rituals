@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import '../models/meditation.dart';
 import './firestore_service.dart';
 
@@ -46,7 +46,7 @@ class OfflineModeService {
       final user = await FirestoreService().getUserStats(userId);
       return user?.hasActiveSubscription ?? false;
     } catch (e) {
-      print('Error checking premium status: $e');
+      debugPrint('Error checking premium status: $e');
       return false;
     }
   }
@@ -119,7 +119,7 @@ class OfflineModeService {
         await prefs.setStringList(_downloadedIdsKey, downloadedIds);
       }
     } catch (e) {
-      print('Download error: $e');
+      debugPrint('Download error: $e');
       rethrow;
     }
   }
@@ -138,7 +138,7 @@ class OfflineModeService {
       downloadedIds.remove(meditationId);
       await prefs.setStringList(_downloadedIdsKey, downloadedIds);
     } catch (e) {
-      print('Error removing track: $e');
+      debugPrint('Error removing track: $e');
     }
   }
 
@@ -168,7 +168,7 @@ class OfflineModeService {
       }
       return totalSize;
     } catch (e) {
-      print('Error calculating download size: $e');
+      debugPrint('Error calculating download size: $e');
       return 0;
     }
   }
@@ -183,7 +183,7 @@ class OfflineModeService {
       }
       return 0;
     } catch (e) {
-      print('Error getting file size: $e');
+      debugPrint('Error getting file size: $e');
       return 0;
     }
   }
@@ -202,7 +202,7 @@ class OfflineModeService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_downloadedIdsKey);
     } catch (e) {
-      print('Error clearing downloads: $e');
+      debugPrint('Error clearing downloads: $e');
     }
   }
 

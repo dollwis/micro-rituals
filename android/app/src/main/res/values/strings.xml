@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="facebook_app_id">1262851415779833</string>
+    <string name="facebook_client_token">eb505a24487c76dbde1a4aa35e3acb8f</string>
+    <string name="fb_login_protocol_scheme">fb1262851415779833</string>
+    <string name="app_name">Zen Vault</string>
+</resources>

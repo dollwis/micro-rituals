@@ -45,7 +45,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             meditations.add(meditation);
           }
         } catch (e) {
-          print('Error loading meditation $id: $e');
+          debugPrint('Error loading meditation $id: $e');
         }
       }
 
@@ -57,7 +57,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         });
       }
     } catch (e) {
-      print('Error loading downloads: $e');
+      debugPrint('Error loading downloads: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }

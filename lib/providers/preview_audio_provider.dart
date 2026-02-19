@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart';
 
 /// Provider for handling short audio previews (e.g. 10s clips)
-/// Uses 'audioplayers' package to run independently from the main 'just_audio' player
-/// to avoid "single player instance" conflicts with just_audio_background.
+/// Uses a separate just_audio AudioPlayer instance to run independently
+/// from the main player, avoiding single-instance conflicts.
 class PreviewAudioProvider extends ChangeNotifier {
   AudioPlayer? _previewPlayer;
   String? _currentPreviewUrl;
@@ -21,18 +21,20 @@ class PreviewAudioProvider extends ChangeNotifier {
   void _initPreviewPlayer() {
     _previewPlayer = AudioPlayer();
 
-    // Configure audio context if needed (default is usually fine for previews)
-    // _previewPlayer!.setAudioContext(...)
-
     // Listen to player state
-    _previewPlayer!.onPlayerStateChanged.listen((state) {
-      _isPreviewPlaying = state == PlayerState.playing;
-      notifyListeners();
+    _previewPlayer!.playerStateStream.listen((state) {
+      final playing = state.playing;
+      if (_isPreviewPlaying != playing) {
+        _isPreviewPlaying = playing;
+        notifyListeners();
+      }
     });
 
     // Auto-stop when preview ends naturally
-    _previewPlayer!.onPlayerComplete.listen((_) {
-      stopPreview();
+    _previewPlayer!.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        stopPreview();
+      }
     });
   }
 
@@ -52,8 +54,9 @@ class PreviewAudioProvider extends ChangeNotifier {
 
       _currentPreviewUrl = url;
 
-      // Play using UrlSource
-      await _previewPlayer?.play(UrlSource(url));
+      // Set URL and play
+      await _previewPlayer?.setUrl(url);
+      await _previewPlayer?.play();
 
       // Auto-stop after duration
       _previewTimer?.cancel();

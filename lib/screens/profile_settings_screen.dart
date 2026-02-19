@@ -66,7 +66,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         });
       }
     } catch (e) {
-      print('Error loading user stats: $e');
+      debugPrint('Error loading user stats: $e');
     }
 
     // 3. Stream for real-time updates (like photo URL)

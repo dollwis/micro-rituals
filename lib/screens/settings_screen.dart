@@ -928,7 +928,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           _buildListItem(
             icon: Icons.shield_outlined,
-            title: 'Privacy Policy',
+            title: 'Terms & Privacy Policy',
             onTap: () {
               Navigator.push(
                 context,
@@ -937,16 +937,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           Divider(color: AppTheme.getBorderColor(context), height: 24),
-          _buildListItem(
-            icon: Icons.help_outline,
-            title: 'Contact Support',
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ContactSupportScreen()),
-              );
-            },
-          ),
+          if (_authService.currentUserId != '7Mg66gFuJvOBMwKHe4MkeD866qR2')
+            _buildListItem(
+              icon: Icons.help_outline,
+              title: 'Support & Inbox',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ContactSupportScreen(),
+                  ),
+                );
+              },
+            ),
         ],
       ),
     );
@@ -1043,7 +1046,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: _buildListItem(
         icon: Icons.admin_panel_settings,
-        title: 'Upload Ritual',
+        title: 'Admin Panel',
         onTap: () {
           Navigator.push(
             context,

@@ -7,6 +7,7 @@ import '../firebase_options.dart';
 import 'notification_service.dart';
 import '../providers/theme_provider.dart';
 import 'cache_cleanup_service.dart';
+import 'ad_service.dart';
 
 /// Orchestrates the app startup process.
 /// Handles initialization of Firebase, crucial providers, and other services.
@@ -59,7 +60,14 @@ class AppInitializationService {
         debugPrint('Cache cleanup failed: $e');
       }
 
-      // 4. Any other pre-fetching of user data could go here...
+      // 5. Initialize AdMob
+      try {
+        await AdService().initialize();
+      } catch (e) {
+        debugPrint('AdService initialization failed: $e');
+      }
+
+      // 6. Any other pre-fetching of user data could go here...
     } catch (e, stackTrace) {
       debugPrint('Initialization failed: $e');
       debugPrintStack(stackTrace: stackTrace);

@@ -408,7 +408,7 @@ class _AdminManageTabState extends State<AdminManageTab> {
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.delete_outline),
-                                  color: Colors.red.withOpacity(0.7),
+                                  color: Colors.red.withValues(alpha: 0.7),
                                   onPressed: () => _deleteRitual(ritual),
                                 ),
                               ],

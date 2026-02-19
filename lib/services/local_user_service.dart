@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/firestore_user.dart';
@@ -34,7 +35,7 @@ class LocalUserService {
         _userStreamController.add(user);
         return user;
       } catch (e) {
-        print('Error parsing local user: $e');
+        debugPrint('Error parsing local user: $e');
       }
     }
 
@@ -79,7 +80,7 @@ class LocalUserService {
         _historyStreamController.add(history);
         return history;
       } catch (e) {
-        print('Error parsing local history: $e');
+        debugPrint('Error parsing local history: $e');
       }
     }
     return [];

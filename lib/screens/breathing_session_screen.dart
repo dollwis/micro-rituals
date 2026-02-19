@@ -369,6 +369,10 @@ class _BreathingSessionScreenState extends State<BreathingSessionScreen>
     // Check for reduced motion accessibility preference
     final reduceMotion = MediaQuery.of(context).disableAnimations;
 
+    // Cache colors outside the builder to avoid per-frame allocation
+    final sageColor = AppTheme.getSageColor(context);
+    final textColor = AppTheme.getTextColor(context);
+
     return Semantics(
       label: _isCompleted
           ? 'Breathing session completed'
@@ -390,109 +394,108 @@ class _BreathingSessionScreenState extends State<BreathingSessionScreen>
               child: SizedBox(
                 width: 320,
                 height: 320,
-                child: AnimatedBuilder(
-                  animation: _breatheController,
-                  builder: (context, child) {
-                    final scale = _isActive && !reduceMotion
-                        ? _scaleAnimation.value
-                        : 0.85;
-                    final opacity = _isActive && !reduceMotion
-                        ? _opacityAnimation.value
-                        : 0.8;
+                // RepaintBoundary isolates animation repaints from rest of tree
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _breatheController,
+                    builder: (context, child) {
+                      final scale = _isActive && !reduceMotion
+                          ? _scaleAnimation.value
+                          : 0.85;
+                      final opacity = _isActive && !reduceMotion
+                          ? _opacityAnimation.value
+                          : 0.8;
 
-                    return Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // Outer glow ring
-                        if (!reduceMotion)
-                          Transform.scale(
-                            scale: scale * 1.1,
-                            alignment: Alignment.center,
-                            child: Container(
-                              width: 320,
-                              height: 320,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: AppTheme.getSageColor(
-                                  context,
-                                ).withValues(alpha: 0.1 * opacity),
-                              ),
-                            ),
-                          ),
-                        // Middle blur ring
-                        if (!reduceMotion)
-                          Transform.scale(
-                            scale: scale * 1.05,
-                            alignment: Alignment.center,
-                            child: Container(
-                              width: 256,
-                              height: 256,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: AppTheme.getSageColor(
-                                  context,
-                                ).withValues(alpha: 0.2 * opacity),
-                              ),
-                            ),
-                          ),
-                        // Main breathing circle
-                        Transform.scale(
-                          scale: reduceMotion ? 1.0 : scale,
-                          alignment: Alignment.center,
-                          child: Container(
-                            width: 280,
-                            height: 280,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AppTheme.getSageColor(
-                                context,
-                              ).withValues(alpha: 0.3),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppTheme.getSageColor(
-                                    context,
-                                  ).withValues(alpha: 0.1),
-                                  blurRadius: 32,
-                                  spreadRadius: 8,
-                                ),
-                              ],
-                            ),
-                            child: Center(
-                              // Inner circle
+                      return Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // Outer glow ring
+                          if (!reduceMotion)
+                            Transform.scale(
+                              scale: scale * 1.1,
+                              alignment: Alignment.center,
                               child: Container(
-                                width: 238,
-                                height: 238,
+                                width: 320,
+                                height: 320,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: AppTheme.getSageColor(context)
-                                      .withValues(
-                                        alpha: reduceMotion
-                                            ? 0.9
-                                            : 0.9 * opacity,
-                                      ),
+                                  color: sageColor.withValues(
+                                    alpha: 0.1 * opacity,
+                                  ),
                                 ),
-                                child: _isCompleted
-                                    ? const Icon(
-                                        Icons.check,
-                                        color: Colors.white,
-                                        size: 64,
-                                      )
-                                    : _isActive
-                                    ? _buildTimer()
-                                    : Icon(
-                                        Icons.play_arrow_rounded,
-                                        color: Colors.white.withValues(
-                                          alpha: 0.8,
+                              ),
+                            ),
+                          // Middle blur ring
+                          if (!reduceMotion)
+                            Transform.scale(
+                              scale: scale * 1.05,
+                              alignment: Alignment.center,
+                              child: Container(
+                                width: 256,
+                                height: 256,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: sageColor.withValues(
+                                    alpha: 0.2 * opacity,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // Main breathing circle
+                          Transform.scale(
+                            scale: reduceMotion ? 1.0 : scale,
+                            alignment: Alignment.center,
+                            child: Container(
+                              width: 280,
+                              height: 280,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: sageColor.withValues(alpha: 0.3),
+                              ),
+                              child: Center(
+                                // Inner circle
+                                child: Container(
+                                  width: 238,
+                                  height: 238,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: sageColor.withValues(
+                                      alpha: reduceMotion ? 0.9 : 0.9 * opacity,
+                                    ),
+                                    // Shadow on inner circle only (smaller, cheaper)
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: sageColor.withValues(
+                                          alpha: 0.15,
                                         ),
-                                        size: 64,
+                                        blurRadius: 16,
+                                        spreadRadius: 2,
                                       ),
+                                    ],
+                                  ),
+                                  child: _isCompleted
+                                      ? const Icon(
+                                          Icons.check,
+                                          color: Colors.white,
+                                          size: 64,
+                                        )
+                                      : _isActive
+                                      ? _buildTimer()
+                                      : Icon(
+                                          Icons.play_arrow_rounded,
+                                          color: Colors.white.withValues(
+                                            alpha: 0.8,
+                                          ),
+                                          size: 64,
+                                        ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    );
-                  },
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -500,6 +503,7 @@ class _BreathingSessionScreenState extends State<BreathingSessionScreen>
             const SizedBox(height: 32),
 
             // Text content - fixed height to prevent layout shift
+            // Uses AnimatedBuilder only for phase text changes (cheap rebuild)
             SizedBox(
               height: 120,
               child: AnimatedBuilder(
@@ -513,7 +517,7 @@ class _BreathingSessionScreenState extends State<BreathingSessionScreen>
                         style: TextStyle(
                           fontSize: 36,
                           fontWeight: FontWeight.w300,
-                          color: AppTheme.getTextColor(context),
+                          color: textColor,
                           letterSpacing: 1,
                         ),
                       ),
@@ -526,9 +530,7 @@ class _BreathingSessionScreenState extends State<BreathingSessionScreen>
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w400,
-                            color: AppTheme.getTextColor(
-                              context,
-                            ).withValues(alpha: 0.7),
+                            color: textColor.withValues(alpha: 0.7),
                             height: 1.4,
                           ),
                           maxLines: 3,

@@ -401,7 +401,7 @@ class _DiscoveryCardState extends State<DiscoveryCard> {
       // Auto-stop after 10 seconds
       _stopTimer = Timer(const Duration(seconds: 10), _stopPreview);
     } catch (e) {
-      print('Preview error: $e');
+      debugPrint('Preview error: $e');
       _stopPreview();
     }
   }

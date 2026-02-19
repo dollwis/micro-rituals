@@ -10,7 +10,6 @@ import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/ritual_window_service.dart';
 
-import 'breathing_session_screen.dart';
 import 'stats_screen.dart';
 import 'settings_screen.dart';
 import 'zen_vault_screen.dart';
@@ -43,6 +42,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
   FirestoreUser? _userStats;
+  StreamSubscription<FirestoreUser?>? _userStatsSubscription;
   String? _streakIconUrl;
   int? _lastStreakForIcon;
 
@@ -136,6 +136,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _userStatsSubscription?.cancel();
     _countdownTimer?.cancel();
     _notificationTimer?.cancel();
     _timeUntilNextWindow.dispose();
@@ -237,7 +238,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _loadUserStats() {
     final uid = _authService.currentUserId;
     if (uid != null) {
-      _firestoreService.streamUserStats(uid).listen((user) {
+      _userStatsSubscription?.cancel();
+      _userStatsSubscription = _firestoreService.streamUserStats(uid).listen((
+        user,
+      ) {
         if (mounted) {
           setState(() => _userStats = user);
           if (user != null) {
@@ -553,26 +557,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildCardInfoChip(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: Colors.white,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-
   String _formatDate(DateTime date) {
     const days = [
       'Sunday',
@@ -598,180 +582,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       'Dec',
     ];
     return '${days[date.weekday % 7]}, ${months[date.month - 1]} ${date.day}';
-  }
-
-  // ignore: unused_element
-  Widget _buildUpNextCardLegacy(Meditation ritual, String windowLabel) {
-    final minutes = ritual.duration;
-    final countdown = RitualWindowService.formatCountdown(
-      _timeUntilNextWindow.value,
-    );
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: AppTheme.getSageCardDecoration(context),
-      child: Stack(
-        children: [
-          // Background blur circle
-          Positioned(
-            right: -32,
-            top: -32,
-            child: Container(
-              width: 128,
-              height: 128,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppTheme.isDark(context)
-                    ? Colors.white.withValues(alpha: 0.05)
-                    : Colors.white.withValues(alpha: 0.3),
-              ),
-            ),
-          ),
-          // Content
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppTheme.sageGreenDark.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      windowLabel.toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.sageGreenDark,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '$minutes min',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.sageGreenDark.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                ritual.title,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.getTextColor(context),
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Start your mindful practice',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppTheme.getTextColor(context).withValues(alpha: 0.7),
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 16),
-              // Countdown Timer
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: AppTheme.sageGreenDark.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.timer_outlined,
-                      size: 16,
-                      color: AppTheme.sageGreenDark.withValues(alpha: 0.8),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Next Ritual in: $countdown',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.sageGreenDark.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Start Button
-              GestureDetector(
-                onTap: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          BreathingSessionScreen(ritual: ritual),
-                    ),
-                  );
-                  // Mark window as completed when returning from session
-                  if (result == true || result == null) {
-                    // User completed or just returned - check if ritual was done
-                    _checkWindowCompletion();
-                  }
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    color: AppTheme.sageGreenDark,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.sageGreenDark.withValues(alpha: 0.2),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'Start Ritual',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildBottomNav() {

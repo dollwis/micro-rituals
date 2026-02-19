@@ -12,6 +12,9 @@ import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'services/app_initialization_service.dart';
 import 'widgets/loading_screen.dart';
+import 'screens/onboarding_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'services/ad_service.dart';
 
 import 'dart:async';
 import 'package:just_audio_background/just_audio_background.dart';
@@ -71,7 +74,28 @@ class DailyMicroRitualsApp extends StatefulWidget {
   State<DailyMicroRitualsApp> createState() => _DailyMicroRitualsAppState();
 }
 
-class _DailyMicroRitualsAppState extends State<DailyMicroRitualsApp> {
+class _DailyMicroRitualsAppState extends State<DailyMicroRitualsApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('App resumed - Checking for Ads');
+      AdService().checkAndShowAd();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
@@ -102,7 +126,7 @@ class _DailyMicroRitualsAppState extends State<DailyMicroRitualsApp> {
           );
 
           return MaterialApp(
-            title: 'Daily Pulse',
+            title: 'Zen Vault: Your Micro Rituals',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme(themeProvider.currentVariant),
             darkTheme: AppTheme.darkTheme(themeProvider.currentVariant),
@@ -126,11 +150,27 @@ class AppStartupFlow extends StatefulWidget {
 
 class _AppStartupFlowState extends State<AppStartupFlow> {
   late Future<void> _initializationFuture;
+  bool _isOnboardingCompleted = false;
 
   @override
   void initState() {
     super.initState();
-    _initializationFuture = AppInitializationService().initialize(context);
+    _initializationFuture = _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await AppInitializationService().initialize(context);
+
+    // Check for ad on app launch (if not onboarding)
+    // We do this after initialization to ensure AdService is ready-ish
+    // But since it's async, we just fire and forget or check synchronously
+    // AdService.checkAndShowAd is void, so we can call it.
+    // Ideally we want to wait until the UI is ready, so we might do it in build/initState of Dashboard?
+    // Or just here.
+    AdService().checkAndShowAd();
+
+    final prefs = await SharedPreferences.getInstance();
+    _isOnboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
   }
 
   @override
@@ -140,6 +180,9 @@ class _AppStartupFlowState extends State<AppStartupFlow> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done) {
           // Initialization complete, check Auth state
+          if (!_isOnboardingCompleted) {
+            return const OnboardingScreen();
+          }
           return const AuthGate();
         }
         // Still initializing

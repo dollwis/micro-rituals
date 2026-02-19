@@ -3,13 +3,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-// import 'package:audioplayers/audioplayers.dart'; // REMOVED
-import 'package:just_audio/just_audio.dart'; // ADDED
+import 'package:just_audio/just_audio.dart';
 import 'package:uuid/uuid.dart';
 import '../models/meditation.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import 'admin_manage_tab.dart';
+import '../widgets/admin_feedback_list.dart';
 
 class AdminUploadScreen extends StatefulWidget {
   const AdminUploadScreen({super.key});
@@ -21,7 +21,6 @@ class AdminUploadScreen extends StatefulWidget {
 class _AdminUploadScreenState extends State<AdminUploadScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
-  // final _durationController = TextEditingController(); // REMOVED
   final _uuid = const Uuid();
   final _firestoreService = FirestoreService();
 
@@ -43,7 +42,6 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   @override
   void dispose() {
     _titleController.dispose();
-    // _durationController.dispose();
     super.dispose();
   }
 
@@ -69,13 +67,9 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
           } else if (_audioFile!.path != null) {
             // just_audio way:
             await player.setFilePath(_audioFile!.path!);
-            final duration =
-                player.duration; // often available after setFilePath
+            final duration = player.duration;
             setState(() {
               _audioDuration = duration;
-              // if (duration != null) {
-              //   _durationController.text = duration.inMinutes.toString();
-              // }
             });
           }
         } catch (e) {
@@ -216,7 +210,6 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   void _resetForm() {
     setState(() {
       _titleController.clear();
-      // _durationController.clear();
       _selectedCategory = Meditation.categories.first;
       _isPremium = false;
       _isAdRequired = false;
@@ -231,7 +224,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
@@ -250,6 +243,7 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
             unselectedLabelColor: AppTheme.getMutedColor(context),
             indicatorColor: AppTheme.getPrimary(context),
             labelStyle: const TextStyle(fontWeight: FontWeight.bold),
+            isScrollable: true,
             tabs: [
               const Tab(text: 'Upload New'),
               StreamBuilder<List<Meditation>>(
@@ -259,10 +253,17 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
                   return Tab(text: 'Manage Content ($count)');
                 },
               ),
+              const Tab(text: 'User Feedback'),
             ],
           ),
         ),
-        body: TabBarView(children: [_buildUploadTab(), const AdminManageTab()]),
+        body: TabBarView(
+          children: [
+            _buildUploadTab(),
+            const AdminManageTab(),
+            const AdminFeedbackList(),
+          ],
+        ),
       ),
     );
   }
@@ -334,22 +335,6 @@ class _AdminUploadScreenState extends State<AdminUploadScreen> {
                   : null,
             ),
             const SizedBox(height: 16),
-
-            // Duration Input REMOVED
-            /*
-            TextFormField(
-              controller: _durationController,
-              keyboardType: TextInputType.number,
-              style: TextStyle(color: AppTheme.getTextColor(context)),
-              decoration: _buildInputDecoration(context, 'Duration (minutes)'),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Required';
-                if (int.tryParse(value) == null) return 'Invalid number';
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            */
 
             // Image Picker
             _buildFilePicker(

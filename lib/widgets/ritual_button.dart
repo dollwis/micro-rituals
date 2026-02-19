@@ -228,7 +228,7 @@ class _RitualButtonState extends State<RitualButton>
                           image: NetworkImage(widget.ritual.coverImageUrl!),
                           fit: BoxFit.cover,
                           colorFilter: ColorFilter.mode(
-                            Colors.black.withOpacity(0.3),
+                            Colors.black.withValues(alpha: 0.3),
                             BlendMode.darken,
                           ),
                         )
@@ -346,9 +346,9 @@ class _RitualButtonState extends State<RitualButton>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white.withOpacity(0.5)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
             ),
             child: const Icon(Icons.play_arrow, color: Colors.white),
           ),

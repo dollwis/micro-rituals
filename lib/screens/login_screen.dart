@@ -302,7 +302,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   _buildSocialButton(
                     'Sign in with Apple',
                     '<svg viewBox="0 0 24 24"><path d="M17.073 10.22c-.015-2.22 1.83-3.29 1.91-3.34-1.04-1.52-2.65-1.73-3.23-1.75-1.37-.14-2.68.8-3.38.8-.69 0-1.78-.79-2.93-.77-1.51.02-2.9.88-3.68 2.23-1.56 2.73-.4 6.78 1.13 8.98.75 1.08 1.63 2.29 2.8 2.24 1.12-.04 1.55-.73 2.91-.73 1.35 0 1.74.73 2.92.71 1.2-.02 1.97-1.1 2.71-2.18.86-1.25 1.21-2.46 1.23-2.53-.02-.01-2.37-.91-2.39-3.66zM14.773 3.65c.62-.75 1.03-1.79.92-2.82-.89.04-1.97.6-2.6 1.34-.57.66-1.07 1.73-.94 2.74.99.08 2.01-.51 2.62-1.26z"></path></svg>',
-                    () {}, // Apple sign-in not implemented yet
+                    () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Apple Sign-In coming soon!'),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 24),
 
